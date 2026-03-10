@@ -1,0 +1,11 @@
+# Copyright (c) 2025, Xettle and contributors
+# For license information, please see license.txt
+
+# import frappe
+from frappe.model.document import Document
+
+
+class RequestResponse(Document):
+	def before_insert(self):
+		self.owner = self.user
+	pass
