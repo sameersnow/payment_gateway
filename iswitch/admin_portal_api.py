@@ -296,6 +296,8 @@ def get_orders(filter_data=None, page=1, page_size=20, sort_by="creation", sort_
                 status = filters["status"]
                 if status == "Processing":
                     status_condition = "o.status IN ('Processing', 'Refund Processing')"
+                elif status == "Cancelled":
+                    status_condition = "o.status IN ('Cancelled', 'Failed')" 
                 else:
                     status_condition = "o.status = %(status)s"
                     base_values["status"] = status  # Add to values map, but only use in query if needed
@@ -357,8 +359,15 @@ def get_orders(filter_data=None, page=1, page_size=20, sort_by="creation", sort_
         # Get Status Counts (Using Base Filters ONLY)
         status_counts_query = f"""
             SELECT status, COUNT(*) as count
-            FROM `tabOrder` o
-            WHERE {base_where}
+            FROM (
+                SELECT 
+                    CASE 
+                        WHEN status IN ('Failed', 'Cancelled') THEN 'Cancelled'
+                        ELSE status
+                    END AS status
+                FROM `tabOrder`
+                WHERE {base_where}
+            ) t
             GROUP BY status
         """
         status_counts_raw = frappe.db.sql(status_counts_query, base_values, as_dict=True)

@@ -211,8 +211,8 @@ def get_orders(filter_data=None, page=1, page_size=20, sort_by="creation", sort_
                 # Map "Pending" to include both "Pending" and "Processing"
                 if status_value == "Pending":
                     filter_conditions.append("(o.status = 'Pending' OR o.status = 'Processing')")
-                elif status_value == "Processed":
-                    filter_conditions.append("(o.status = 'Processed' OR o.status = 'Success' OR o.status = 'Paid')")
+                elif status_value == "Cancelled":
+                    filter_conditions.append("(o.status = 'Cancelled' OR o.status = 'Failed')")
                 else:
                     filter_conditions.append("o.status = %(status)s")
                     filter_values["status"] = status_value

@@ -6,6 +6,7 @@ from datetime import datetime as dt, timedelta as td
 import hashlib
 from .bank import JSONEncryptionDecryption
 import tigerbeetle as tb
+import base64
 from iswitch.tigerbeetle_client import get_client
 from decimal import Decimal
 from Crypto.Hash import HMAC, SHA256
@@ -268,8 +269,16 @@ def update_record():
                 crn = frappe.db.get_value("Transaction",{"order":result.name},'crn')
 
                 url = processor.api_endpoint.rstrip("/") + f"/payout/orders/{crn}"
+                username = processor.get_password("client_id")
+                password = processor.get_password("secret_key")
+                # Combine username and password
+                credentials = f"{username}:{password}"
+                # Encode to Base64
+                encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
                 headers = {
-                    "Authorization": "Basic <Base64Encoded(username:password)>"
+                    "Content-Type": "application/json",
+                    "Authorization": f"Basic {encoded_credentials}"
                 }
                 response = requests.get(url, json=payload, headers=headers, timeout=30)
                 api_response = None
@@ -278,7 +287,7 @@ def update_record():
                 except Exception as e:
                     frappe.log_error("Error in onepesa requery",response.text)
                     frappe.throw("Error in onepesa requery")
-                
+                frappe.log_error("One Pesa requery response", api_response)
                 if api_response.get("code") == "0x0200":
                     txn_status == api_response.get("status")
                     utr = api_response.get("data",{}).get("utr","")

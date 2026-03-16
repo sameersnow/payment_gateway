@@ -179,6 +179,7 @@ override_whitelisted_methods = {
 	"update_record": "iswitch.api.update_transaction_status",
 	"requery": "iswitch.api.get_order_status",
 	"blinkpe": "iswitch.webhook.blinkpe_webhook",
+	"onepesa": "iswitch.webhook.onepesa_webhook",
 	"wallet": "iswitch.api.get_wallet_balance",
 	"read_email": "iswitch.email_reader.process_gmail_emails",
 	"recharge": "iswitch.wallet.recharge_wallet",

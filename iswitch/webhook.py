@@ -14,229 +14,10 @@ from iswitch.order_webhook_handlers import (
             handle_topup_success,
             handle_topup_failure,
             handle_refund_success,
-            handle_refund_failure
+            handle_refund_failure,
+            handle_transaction_failure,
+            handle_transaction_success
         )
-
-def stable_id(value: str) -> int:
-    return int(hashlib.sha256(value.encode()).hexdigest()[:32], 16)
-
-def handle_transaction_failure(name, status, error_message):
-    """
-    Void authorized (pending) transfer on failure webhook.
-    """
-    try:
-        doc = frappe.db.get_value(
-            "Order",
-            name,
-            ["name", "merchant_ref_id", "transaction_amount","client_ref_id"],
-            as_dict=True
-        )
-        transaction = frappe.db.get_value("Transaction", {"order": name}, ["name","docstatus"], as_dict=True)
-        
-        if transaction.docstatus == 1:
-            frappe.throw("Transaction already processed")
-
-        # merchant = frappe.get_doc("Merchant", doc.merchant_ref_id)
-        merchant_tb_id = frappe.db.get_value(
-            "Merchant",
-            doc.merchant_ref_id,
-            "tigerbeetle_id"
-        )
-
-        if not merchant_tb_id:
-            frappe.throw("Merchant TB account missing")
-
-        # frappe.set_user(doc.merchant_ref_id)
-
-        client = get_client()
-
-        merchant_account_id = int(merchant_tb_id)
-        system_account_id = 1
-        amount = int(Decimal(doc.transaction_amount) * 100)
-
-        # 🔹 1️⃣ Balance BEFORE void
-        acc_before = client.lookup_accounts([merchant_account_id])[0]
-
-        opening_balance = (
-            acc_before.credits_posted
-            - acc_before.debits_posted
-            - acc_before.debits_pending
-        ) / 100
-
-        # 🔐 Deterministic IDs
-        auth_transfer_id = stable_id(f"auth-{doc.name}")
-        void_transfer_id = stable_id(f"void-{doc.name}")
-
-        # 🔹 VOID pending transfer
-        void_transfer = tb.Transfer(
-            id=void_transfer_id,
-            debit_account_id=merchant_account_id,
-            credit_account_id=system_account_id,
-            amount=amount,
-            pending_id=auth_transfer_id,
-            user_data_128=0,
-            user_data_64=0,
-            user_data_32=0,
-            timeout=0,
-            ledger=1,
-            code=400,
-            flags=tb.TransferFlags.VOID_PENDING_TRANSFER,
-            timestamp=0,
-        )
-
-        errors = client.create_transfers([void_transfer])
-
-        if errors:
-            error = errors[0]
-            if error.result != tb.CreateTransferResult.EXISTS:
-                frappe.throw(f"Void failed: {error.result}")
-        
-        # 🔹 3️⃣ Balance AFTER void
-        acc_after = client.lookup_accounts([merchant_account_id])[0]
-
-        closing_balance = (
-            acc_after.credits_posted
-            - acc_after.debits_posted
-            - acc_after.debits_pending
-        ) / 100
-        
-
-        frappe.db.set_value(
-            "Order",
-            doc.name,
-            "status",
-            f"{status}",
-            update_modified=False
-        )
-
-        frappe.db.set_value(
-            "Transaction",
-            {"order": doc.name},
-            {
-                "status": f"{status}",
-                "docstatus": 1
-            },
-            update_modified=False
-        )
-        # 🔹 Update Order
-        # doc.status = status
-        # doc.reason = error_message[:100]
-        # doc.save(ignore_permissions=True)
-
-        # 🔹 Update Transaction
-        # transaction = frappe.get_doc("Transaction", {"order": name})
-        # transaction.status = status
-        # transaction.save(ignore_permissions=True)
-        # transaction.submit()
-        
-        ledger = frappe.get_doc({
-            "doctype": 'Ledger',
-            "order": doc.name,
-            "transaction_type": 'Credit',
-            'status': status,
-            'transaction_id': transaction.name,
-            'client_ref_id': doc.client_ref_id,
-            'opening_balance': opening_balance,
-            "closing_balance": closing_balance
-        }).insert(ignore_permissions=True)
-        ledger.submit()
-        
-    except Exception as e:
-        # frappe.db.rollback(save_point="webhook_process")
-        frappe.log_error("Void Error", str(e))
-        raise
-
-def handle_transaction_success(name, status, transaction_reference_id):
-    """
-    Capture authorized (pending) transfer on success webhook.
-    """
-    try:
-        doc = frappe.db.get_value("Order", name,["name", "merchant_ref_id", "transaction_amount","client_ref_id"], as_dict=True)
-        transaction = frappe.db.get_value("Transaction", {"order": name}, ["name","docstatus"], as_dict=True)
-
-        if transaction.docstatus == 1:
-            frappe.throw("Transaction already processed")
-
-        # merchant = frappe.get_doc("Merchant", doc.merchant_ref_id)
-        merchant_tb_id = frappe.db.get_value(
-            "Merchant",
-            doc.merchant_ref_id,
-            "tigerbeetle_id"
-        )
-        if not merchant_tb_id:
-            frappe.throw("Merchant TB account missing")
-
-        # frappe.set_user(doc.merchant_ref_id)
-
-        client = get_client()
-
-        merchant_account_id = int(merchant_tb_id)
-        system_account_id = 1
-        amount = int(Decimal(doc.transaction_amount) * 100)
-
-        # 🔐 Deterministic IDs
-        auth_transfer_id = stable_id(f"auth-{doc.name}")
-        capture_transfer_id = stable_id(f"capture-{doc.name}")
-
-        # 🔹 POST pending transfer (Capture)
-        capture = tb.Transfer(
-            id=capture_transfer_id,
-            debit_account_id=merchant_account_id,
-            credit_account_id=system_account_id,
-            amount=amount,
-            pending_id=auth_transfer_id,
-            user_data_128=0,
-            user_data_64=0,
-            user_data_32=0,
-            timeout=0,
-            ledger=1,
-            code=400,
-            flags=tb.TransferFlags.POST_PENDING_TRANSFER,
-            timestamp=0,
-        )
-
-        errors = client.create_transfers([capture])
-
-        if errors:
-            error = errors[0]
-            if error.result != tb.CreateTransferResult.EXISTS:
-                frappe.throw(f"Capture failed: {error.result}")
-
-        frappe.db.set_value(
-            "Transaction",
-            {"order": doc.name},
-            {
-                "status": f"{status}",
-                "transaction_reference_id": transaction_reference_id,
-                "docstatus": 1
-            },
-            update_modified=False
-        )
-        status = "Processed" if status == "Success" else status
-        frappe.db.set_value(
-            "Order",
-            doc.name,
-            "status",
-            f"{status}",
-            update_modified=False
-        )
-        # 🔹 Update Order
-        # doc.status = "Processed" if status == "Success" else status
-        # doc.utr = transaction_reference_id
-        # doc.save(ignore_permissions=True)
-
-        # 🔹 Update Transaction
-        # transaction = frappe.get_doc("Transaction", {"order": name})
-        # transaction.status = status
-        # transaction.transaction_reference_id = transaction_reference_id
-        # transaction.save(ignore_permissions=True)
-        # transaction.submit()
-
-    except Exception as e:
-        # frappe.db.rollback(save_point="webhook_process")
-        frappe.log_error("Capture Error", str(e))
-        raise
-
 
 @frappe.whitelist(allow_guest=True)
 def blinkpe_webhook():
@@ -403,8 +184,9 @@ def process_onepesa_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
                 order_id = data.get("clientRefId")
                 remark = data.get("reason")
                 handle_transaction_failure(order_id, "Failed", remark)
-
     except Exception as e:
+        frappe.log_error("Error in processing onepesa webhook", str(e))
+        raise
 
 
 def process_mock_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -467,7 +249,7 @@ def process_mock_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
         
     except Exception as e:
         frappe.log_error("Error processing mock webhook", str(e))
-        return {"success": False, "error": str(e)}
+        raise
     
 
 def process_tpipay_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -502,13 +284,9 @@ def process_tpipay_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
                 frappe.db.commit()
                 return {"success": True, "message": f"Payout {order_id} marked as failed"}
         
-        else:
-            frappe.log_error(f"Unknown order type: {order.order_type}", "Webhook Error")
-            return {"success": False, "error": f"Unknown order type: {order.order_type}"}
-    
     except Exception as e:
         frappe.log_error("Error processing mock webhook", str(e))
-        return {"success": False, "error": str(e)}
+        raise
 
 def process_airtel_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
