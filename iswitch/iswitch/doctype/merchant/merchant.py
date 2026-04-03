@@ -123,8 +123,23 @@ class Merchant(Document):
             flags=tb.AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS,
             timestamp=0,
         )
+        payin_id = tb.id()
 
-        errors = client.create_accounts([main_account, lien_account])
+        payin_account = tb.Account(
+            id=payin_id,
+            debits_pending=0,
+            debits_posted=0,
+            credits_pending=0,
+            credits_posted=0,
+            user_data_128=0,
+            user_data_64=0,
+            user_data_32=0,
+            ledger=1,
+            code=300,  # 👈 payin wallet
+            flags=tb.AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS,
+            timestamp=0,
+        )
+        errors = client.create_accounts([main_account, lien_account, payin_account])
 
         if errors:
             error = errors[0]
@@ -138,3 +153,4 @@ class Merchant(Document):
         # Save TB account id in merchant
         self.db_set("tigerbeetle_id", str(main_account.id))
         self.db_set("lien_tigerbeetle_id", str(lien_account.id))
+        self.db_set("payin_tigerbeetle_id", str(payin_account.id))
