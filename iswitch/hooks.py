@@ -154,13 +154,13 @@ app_license = "mit"
 # Scheduled Tasks
 # ---------------
 
-scheduler_events = {
-	"cron": {
-        "*/10 * * * *": [
-            "iswitch.refetch.update_record"
-        ]
-    }
-}
+# scheduler_events = {
+# 	"cron": {
+#         "*/10 * * * *": [
+#             "iswitch.refetch.update_record"
+#         ]
+#     }
+# }
 
 # Testing
 # -------
@@ -180,6 +180,8 @@ override_whitelisted_methods = {
 	"requery": "iswitch.api.get_order_status",
 	"blinkpe": "iswitch.webhook.blinkpe_webhook",
 	"onepesa": "iswitch.webhook.onepesa_webhook",
+	"mock": "iswitch.webhook.mockpay_webhook",
+	"asianpay": "iswitch.webhook.asianpay_webhook",
 	"wallet": "iswitch.api.get_wallet_balance",
 	"read_email": "iswitch.email_reader.process_gmail_emails",
 	"recharge": "iswitch.wallet.recharge_wallet",

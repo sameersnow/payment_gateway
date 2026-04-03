@@ -65,7 +65,7 @@ export function DebitCard({ balance, pendingBalance, merchantName, cardNumber = 
                     <div className="flex flex-col items-end bg-black/20 backdrop-blur-md rounded-lg px-2 py-1.5 border border-white/5 shrink-0">
                         <div className="flex items-center gap-1 text-warning-400">
                             <div className="w-1 h-1 rounded-full bg-current animate-pulse"></div>
-                            <span className="text-[8px] font-bold uppercase tracking-wider">Pending</span>
+                            <span className="text-[8px] font-bold uppercase tracking-wider">PAYIN BALANCE</span>
                         </div>
                         <span className="text-xs sm:text-sm font-semibold tabular-nums mt-0.5 leading-none">
                             {formatCurrency(pendingBalance)}

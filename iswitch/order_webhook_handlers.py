@@ -9,12 +9,18 @@ import tigerbeetle as tb
 from decimal import Decimal
 from iswitch.tigerbeetle_client import get_client
 from frappe.utils import now
+from iswitch.webhook_dispatcher import dispatch
 
 
 def stable_id(value: str) -> int:
     """Generate deterministic ID from string"""
     return int(hashlib.sha256(value.encode()).hexdigest()[:32], 16)
 
+def is_already_processed(transaction, ref):
+    if not transaction:
+        frappe.log_error(f"Missing Transaction for {ref}", "Skip")
+        return True
+    return transaction.docstatus == 1
 
 def handle_topup_success(order_name, transaction_reference_id):
     """
@@ -29,12 +35,12 @@ def handle_topup_success(order_name, transaction_reference_id):
         transaction = frappe.db.get_value("Transaction", {"order": order_name}, ["name", "docstatus"], as_dict=True)
         
         # Check if already processed
-        if transaction.docstatus == 1:
+        if is_already_processed(transaction, order_name):
             return
         
-        merchant_tb_id = frappe.db.get_value("Merchant", order.merchant_ref_id, "tigerbeetle_id")
+        merchant_tb_id = frappe.db.get_value("Merchant", order.merchant_ref_id, "payin_tigerbeetle_id")
         if not merchant_tb_id:
-            raise Exception("Merchant TigerBeetle account not configured")
+            raise Exception("Merchant Payin TigerBeetle account not configured")
         
         # frappe.set_user(order.merchant_ref_id)
         
@@ -118,7 +124,7 @@ def handle_topup_success(order_name, transaction_reference_id):
             {"utr": order.name, "status": "Pending"},
             {"status": "Success", "utr": transaction_reference_id, "opening_balance": opening_balance, "closing_balance": closing_balance, "docstatus": 1}
         )
-        
+        dispatch(transaction.name, order.merchant_ref_id, "Topup Success")
     except Exception as e:
         frappe.log_error("Error in topup success handler", frappe.get_traceback())
         raise
@@ -138,12 +144,12 @@ def handle_topup_failure(order_name, status, error_message):
         transaction = frappe.db.get_value("Transaction", {"order": order_name}, ["name", "docstatus"], as_dict=True)
         
         # Check if already processed
-        if transaction.docstatus == 1:
+        if is_already_processed(transaction, order_name):
             return
         
-        merchant_tb_id = frappe.db.get_value("Merchant", order.merchant_ref_id, "tigerbeetle_id")
+        merchant_tb_id = frappe.db.get_value("Merchant", order.merchant_ref_id, "payin_tigerbeetle_id")
         if not merchant_tb_id:
-            raise Exception("Merchant TigerBeetle account not configured")
+            raise Exception("Merchant Payin TigerBeetle account not configured")
         
         # frappe.set_user(order.merchant_ref_id)
         
@@ -199,7 +205,7 @@ def handle_topup_failure(order_name, status, error_message):
             {"utr": order.name, "status": "Pending"},
             {"status": "Failed", "docstatus": 1}
         )
-        
+        dispatch(transaction.name, order.merchant_ref_id, "Topup Failed")
     except Exception as e:
         frappe.log_error("Error in topup failure handler", frappe.get_traceback())
         raise
@@ -219,7 +225,7 @@ def handle_refund_success(refund_request_name, transaction_reference_id):
         # order = frappe.get_doc("Order", refund_doc.order_id)
         transaction = frappe.db.get_value("Transaction", {"order": refund_doc.order_id}, ["name", "docstatus"], as_dict=True)
         # merchant = frappe.get_doc("Merchant", order.merchant_ref_id)
-        if transaction.docstatus == 1:
+        if is_already_processed(transaction, refund_request_name):
             return
 
         merchant_td_id = frappe.db.get_value("Merchant", refund_doc.merchant_id, "tigerbeetle_id")
@@ -309,7 +315,7 @@ def handle_refund_success(refund_request_name, transaction_reference_id):
         }).insert(ignore_permissions=True)
         ledger.submit()
         # frappe.log_error(f"Refund success processed: {refund_request_name}", "Refund Success")
-        
+        dispatch(transaction.name, refund_doc.merchant_id, "Reversed")
     except Exception as e:
         frappe.log_error("Error in refund success handler", frappe.get_traceback())
         raise
@@ -330,7 +336,7 @@ def handle_refund_failure(refund_request_name, status, error_message):
         # merchant = frappe.get_doc("Merchant", order.merchant_ref_id)
         transaction = frappe.db.get_value("Transaction", {"order": refund_doc.order_id}, ["name", "docstatus"], as_dict=True)
         
-        if transaction.docstatus == 1:
+        if is_already_processed(transaction, refund_request_name):
             return
         
         merchant_tb_id = frappe.db.get_value("Merchant", refund_doc.merchant_id, "tigerbeetle_id")
@@ -385,7 +391,7 @@ def handle_refund_failure(refund_request_name, status, error_message):
         frappe.db.set_value("Order", refund_doc.order_id, {"status": "Processed"})
         # transaction.status = "Refund Failed"
         frappe.db.set_value("Transaction", {"order": refund_doc.order_id}, {"status": "Failed", "docstatus": 1})
-        
+        dispatch(transaction.name, refund_doc.merchant_id, "Refund Failed")
     except Exception as e:
         frappe.log_error("Error in refund failure handler", frappe.get_traceback())
         raise
@@ -404,7 +410,7 @@ def handle_transaction_failure(name, status, error_message):
         )
         transaction = frappe.db.get_value("Transaction", {"order": name}, ["name","docstatus"], as_dict=True)
         
-        if transaction.docstatus == 1:
+        if is_already_processed(transaction, name):
             return
 
         # merchant = frappe.get_doc("Merchant", doc.merchant_ref_id)
@@ -475,8 +481,10 @@ def handle_transaction_failure(name, status, error_message):
         frappe.db.set_value(
             "Order",
             doc.name,
-            "status",
-            f"{status}",
+            {
+                "status":f"{status}",
+                "reason": error_message
+            },
             update_modified=False
         )
 
@@ -502,7 +510,7 @@ def handle_transaction_failure(name, status, error_message):
             "closing_balance": closing_balance
         }).insert(ignore_permissions=True)
         ledger.submit()
-        
+        dispatch(transaction.name, doc.merchant_ref_id, status)
     except Exception as e:
         # frappe.db.rollback(save_point="webhook_process")
         frappe.log_error("Void Error", str(e))
@@ -516,7 +524,7 @@ def handle_transaction_success(name, status, transaction_reference_id):
         doc = frappe.db.get_value("Order", name,["name", "merchant_ref_id", "transaction_amount","client_ref_id"], as_dict=True)
         transaction = frappe.db.get_value("Transaction", {"order": name}, ["name","docstatus"], as_dict=True)
 
-        if transaction.docstatus == 1:
+        if is_already_processed(transaction, name):
             return
 
         # merchant = frappe.get_doc("Merchant", doc.merchant_ref_id)
@@ -574,15 +582,17 @@ def handle_transaction_success(name, status, transaction_reference_id):
             },
             update_modified=False
         )
-        status = "Processed" if status == "Success" else status
+        order_status = "Processed" if status == "Success" else status
         frappe.db.set_value(
             "Order",
             doc.name,
-            "status",
-            f"{status}",
+            {
+                "status":f"{order_status}",
+                "utr":transaction_reference_id
+            },
             update_modified=False
         )
-
+        dispatch(transaction.name, doc.merchant_ref_id, status)
     except Exception as e:
         # frappe.db.rollback(save_point="webhook_process")
         frappe.log_error("Capture Error", str(e))

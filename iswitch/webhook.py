@@ -148,6 +148,93 @@ def tpipay_webhook():
             "status": "failed"
         }
 
+@frappe.whitelist(allow_guest=True)
+def mockpay_webhook():
+    try:
+        if frappe.request.method != "POST":
+            return frappe.response.update({
+                "http_status_code": 405,
+                "message": "Only POST method allowed",
+                "status": "failed"
+            })
+
+        # Parse JSON payload
+        try:
+            payload = json.loads(frappe.request.data)
+            webhook = frappe.get_doc({
+                "doctype":"Blinkpe Webhook",
+                "webhook_data":payload,
+                "integration": "Dummy Processor"
+            }).insert(ignore_permissions=True)
+            webhook.submit()
+            frappe.db.commit()
+            frappe.enqueue("iswitch.webhook.process_webhook",
+                doc=webhook,
+                queue="short",
+                timeout=300)
+            
+            return {"status": "success", "message": "Webhook processed"}
+            
+        except json.JSONDecodeError:
+            frappe.log_error("Invalid JSON in webhook request", "Xettle Webhook")
+            return frappe.response.update({
+                "http_status_code": 400,
+                "message": "Invalid JSON payload",
+                "status": "failed"
+            })
+
+    except Exception as e:
+        frappe.log_error("Webhook processing error", str(e))
+        return {
+            "http_status_code": 500,
+            "message": "Internal server error",
+            "status": "failed"
+        }
+
+
+@frappe.whitelist(allow_guest=True)
+def asianpay_webhook():
+    try:
+        if frappe.request.method != "POST":
+            return frappe.response.update({
+                "http_status_code": 405,
+                "message": "Only POST method allowed",
+                "status": "failed"
+            })
+
+        # Parse JSON payload
+        try:
+            payload = json.loads(frappe.request.data)
+            webhook = frappe.get_doc({
+                "doctype":"Blinkpe Webhook",
+                "webhook_data":payload,
+                "integration": "Asian Pay"
+            }).insert(ignore_permissions=True)
+            webhook.submit()
+            frappe.db.commit()
+            frappe.enqueue("iswitch.webhook.process_webhook",
+                doc=webhook,
+                queue="short",
+                timeout=300)
+            
+            return {"status": "success", "message": "Webhook processed"}
+            
+        except json.JSONDecodeError:
+            frappe.log_error("Invalid JSON in webhook request", "Xettle Webhook")
+            return frappe.response.update({
+                "http_status_code": 400,
+                "message": "Invalid JSON payload",
+                "status": "failed"
+            })
+
+    except Exception as e:
+        frappe.log_error("Webhook processing error", str(e))
+        return {
+            "http_status_code": 500,
+            "message": "Internal server error",
+            "status": "failed"
+        }
+
 def process_webhook(doc):
     frappe.db.savepoint("webhook_process")
     try:
@@ -163,6 +250,10 @@ def process_webhook(doc):
             process_onepesa_webhook(payload)
         elif integration == "TPI PAY":
             process_tpipay_webhook(payload)
+        elif integration == "Dummy Processor":
+            process_mock_webhook(payload)
+        elif integration == "Asian Pay":
+            process_asianpay_webhook(payload)
 
     except Exception as e:
         frappe.db.rollback(save_point = "webhook_process")
@@ -171,23 +262,51 @@ def process_webhook(doc):
 def process_onepesa_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         code = payload.get("code")
-        if code == "0x0200":
-            data = payload.get("data",{})
-            if data.get("status","") == "SUCCESS":
-                order_id = data.get("clientRefId")
-                utr = data.get("utr")
-                handle_transaction_success(order_id, "Success", utr)
+        data = payload.get("data") or {}
+
+        order_id = data.get("clientRefId")
+        status = data.get("status")
+        
+        if not order_id:
+            frappe.log_error("Missing clientRefId in webhook", str(payload))
+            return
+
+        if code == "0x0200" and (status == "success" or status == "processed"):
+            utr = data.get("utr")
+            handle_transaction_success(order_id, "Success", utr)
                 
-        elif code == "0x0202":
-            data = payload.get("data",{})
-            if data.get("status","") == "FAILURE":
-                order_id = data.get("clientRefId")
-                remark = data.get("reason")
-                handle_transaction_failure(order_id, "Failed", remark)
+        elif code == "0x0202" and status == "failed":
+            remark = data.get("reason") or payload.get("message")
+            handle_transaction_failure(order_id, "Failed", remark)
+            
     except Exception as e:
         frappe.log_error("Error in processing onepesa webhook", str(e))
         raise
 
+def process_asianpay_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        gateway_order_id = payload.get("order_id")
+        status = payload.get("order_status")
+        utr = payload.get("bank_reference")
+        remark = payload.get("payment_message", "No remark provided")
+        if not gateway_order_id:
+            frappe.log_error("Missing order_id in Asian Pay webhook", "Asian Pay Webhook")
+            return {"success": False, "error": "Missing order_id"}
+        
+        order_id = frappe.db.get_value("Transaction",{"crn":gateway_order_id},"order")
+        
+        if not order_id:
+            frappe.log_error("AsianPay Webhook Error", f"Order not found for CRN: {gateway_order_id}")
+            return
+            
+        if (status == "PAID" or status == "paid" or status == "Paid"):
+            handle_topup_success(order_id, utr)
+        
+        elif (status == "FAILED" or status == "failed" or status == "Failed") or (status == "EXPIRED" or status == "expired" or status == "Expired"):
+            handle_topup_failure(order_id, "Failed", remark)
+        
+    except Exception as e:
+        frappe.log_error("Error in asianpay webhook handling",str(e))
 
 def process_mock_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
     # This is a mock webhook processor for testing purposes

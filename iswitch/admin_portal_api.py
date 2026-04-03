@@ -64,10 +64,10 @@ def get_dashboard_stats(period='Last 30 days'):
                 SUM(CASE WHEN status = 'Processed' THEN 1 ELSE 0 END) as processed_orders,
                 SUM(CASE WHEN status IN ('Pending', 'Processing', 'Queued') THEN 1 ELSE 0 END) as pending_orders,
                 SUM(CASE WHEN status IN ('Cancelled', 'Reversed') THEN 1 ELSE 0 END) as cancelled_orders,
-                SUM(CASE WHEN status = 'Processed' THEN COALESCE(order_amount, 0) ELSE 0 END) as total_processed_amount,
-                SUM(CASE WHEN status IN ('Pending', 'Processing', 'Queued') THEN COALESCE(order_amount, 0) ELSE 0 END) as total_pending_amount,
-                SUM(CASE WHEN status IN ('Cancelled', 'Reversed') THEN COALESCE(order_amount, 0) ELSE 0 END) as total_cancelled_amount,
-                SUM(COALESCE(order_amount, 0)) as total_orders_amount
+                SUM(CASE WHEN status = 'Processed' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as total_processed_amount,
+                SUM(CASE WHEN status IN ('Pending', 'Processing', 'Queued') THEN COALESCE(transaction_amount, 0) ELSE 0 END) as total_pending_amount,
+                SUM(CASE WHEN status IN ('Cancelled', 'Reversed') THEN COALESCE(transaction_amount, 0) ELSE 0 END) as total_cancelled_amount,
+                SUM(COALESCE(transaction_amount, 0)) as total_orders_amount
             FROM `tabOrder`
         """, as_dict=True)
 
@@ -1944,7 +1944,8 @@ def get_merchant_details(merchant_name):
             "company_pan": merchant_doc.company_pan,
             "company_gst": merchant_doc.company_gst,
             "wallet_balance": main_balance,
-            "lien_balance": lien_balance
+            "lien_balance": lien_balance,
+            "creation": merchant_doc.creation
         }
 
         # Product pricing

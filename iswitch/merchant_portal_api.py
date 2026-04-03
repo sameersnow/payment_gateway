@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from frappe.utils.file_manager import save_file
 from iswitch.merchant_team_helper import get_logged_in_merchant_id, get_current_user_role
 import tigerbeetle as tb
+from decimal import Decimal
 from iswitch.tigerbeetle_client import get_client
 
 @frappe.whitelist()
@@ -696,19 +697,34 @@ def get_van_account():
         ifsc_code = van_account[0].ifsc_code if van_account else ""
         bank_name = van_account[0].bank_name if van_account else ""        
         # Get pending VAN logs balance
-        pending_balance = frappe.db.sql("""
-            SELECT COALESCE(SUM(amount), 0) as total
-            FROM `tabVirtual Account Logs`
-            WHERE owner = %s AND status IN ('Pending', 'Processing')
-        """, (merchant_id,), as_dict=True)
+        # pending_balance = frappe.db.sql("""
+        #     SELECT COALESCE(SUM(amount), 0) as total
+        #     FROM `tabVirtual Account Logs`
+        #     WHERE owner = %s AND status IN ('Pending', 'Processing')
+        # """, (merchant_id,), as_dict=True)
         
-        pending_amount = pending_balance[0].total if pending_balance else 0
+        # pending_amount = pending_balance[0].total if pending_balance else 0
+        merchant_tb_id = frappe.db.get_value("Merchant", merchant_id, "payin_tigerbeetle_id")
+        if not merchant_tb_id:
+            raise Exception("Merchant Payin TigerBeetle account not configured")
+
+        client = get_client()
+        merchant_account_id = int(merchant_tb_id)
+        system_account_id = 1
+
+        acc_before = client.lookup_accounts([merchant_account_id])[0]
+
+        account_balance = (
+            acc_before.credits_posted
+            - acc_before.debits_posted
+            - acc_before.debits_pending
+        ) / 100
         
         return {
             "account_number": account_number,
             "ifsc_code": ifsc_code,
             "bank_name": bank_name,
-            "pending_balance": pending_amount
+            "pending_balance": account_balance
         }
     except Exception as e:
         frappe.log_error(f"Error in get_van_account: {str(e)}", "Merchant Portal API")
