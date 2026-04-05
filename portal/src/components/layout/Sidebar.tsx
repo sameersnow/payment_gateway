@@ -22,7 +22,7 @@ interface NavItem {
 
 const merchantNavItems: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
+  // { name: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
   { name: 'Orders', href: '/orders', icon: ShoppingCart },
   { name: 'Ledger', href: '/ledger', icon: BookOpen },
   { name: 'Settlements', href: '/settlements', icon: Wallet },
@@ -48,7 +48,7 @@ const adminNavItems: NavItem[] = [
   { name: 'Orders', href: '/admin/orders', icon: ShoppingCart },
   { name: 'KYC Reviews', href: '/admin/kyc-reviews', icon: FileText },
   { name: 'Reports', href: '/admin/reports', icon: BarChart3 },
-  { name: 'Transactions', href: '/admin/transactions', icon: ArrowLeftRight },
+  // { name: 'Transactions', href: '/admin/transactions', icon: ArrowLeftRight },
   // Temporarily disabled - not implemented with real APIs:
   // { name: 'Risk Alerts', href: '/admin/risk-alerts', icon: AlertTriangle },
   // { name: 'Users', href: '/admin/users', icon: Users },

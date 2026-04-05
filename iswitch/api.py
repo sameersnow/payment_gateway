@@ -437,18 +437,6 @@ def create_order():
                 "fee": fee,
                 "transaction_amount": total_amount
             }).insert(ignore_permissions=True)
-
-        # CREATE TRANSACTION
-        transaction = frappe.get_doc({
-            "doctype": 'Transaction',
-            "order": order.name,
-            "merchant": order.merchant_ref_id,
-            "amount": order.transaction_amount,
-            "integration": order.integration_id,
-            "status": "Processing",
-            "product": order.product,
-            "transaction_date": frappe.utils.now()
-        }).insert(ignore_permissions=True)
         
         frappe.db.commit()
 

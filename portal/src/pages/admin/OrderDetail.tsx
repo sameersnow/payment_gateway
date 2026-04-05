@@ -62,7 +62,7 @@ export function AdminOrderDetail() {
                 <div className="text-center py-12">
                     <h2 className="text-lg font-medium text-slate-900">Order not found</h2>
                     <p className="text-slate-500 mt-2">{error || 'Unknown error'}</p>
-                    <Link to="/admin/transactions" className="text-primary-600 hover:text-primary-700 mt-2 inline-block">
+                    <Link to="/admin/orders" className="text-primary-600 hover:text-primary-700 mt-2 inline-block">
                         Back to transactions
                     </Link>
                 </div>
@@ -75,7 +75,7 @@ export function AdminOrderDetail() {
             <div className="space-y-6">
                 <div className="flex items-center gap-4">
                     <Link
-                        to="/admin/transactions"
+                        to="/admin/orders"
                         className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
                     >
                         <ArrowLeft className="w-5 h-5 text-slate-600" />
@@ -125,7 +125,7 @@ export function AdminOrderDetail() {
                                 <div>
                                     <p className="text-xs text-slate-500 mb-1">Transaction Amount</p>
                                     <p className="text-sm font-medium text-slate-900">
-                                        {formatCurrency(order.transaction_amount || order.amount)}
+                                        {formatCurrency(order.subtotal || order.amount)}
                                     </p>
                                 </div>
                                 <div>
@@ -173,7 +173,7 @@ export function AdminOrderDetail() {
                                 <div className="pt-3 border-t border-slate-200 flex justify-between">
                                     <span className="text-base font-medium text-slate-900">Total</span>
                                     <span className="text-base font-semibold text-slate-900">
-                                        {formatCurrency((order.transaction_amount || order.amount) + (order.fee || 0) + (order.tax || 0))}
+                                        {formatCurrency(order.subtotal || order.amount)}
                                     </span>
                                 </div>
                             </div>

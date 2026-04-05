@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from frappe.utils.file_manager import save_file
 import tigerbeetle as tb
 from iswitch.tigerbeetle_client import get_client
+from decimal import Decimal
 
 def check_admin_permission():
     # role_profile = frappe.db.get_value("User", frappe.session.user, "role_profile_name")
@@ -2385,7 +2386,7 @@ def onboard_merchant(personal_name, email, password, pancard="PENDING"):
         return {"success": False, "error": str(e)}
 
 @frappe.whitelist()
-def credit_wallet(merchant_id, amount):
+def credit_wallet(merchant_id, amount, action, wallet_type):
     """Credit amount to merchant wallet via Virtual Account Log"""
     try:
         check_admin_permission()
@@ -2393,42 +2394,112 @@ def credit_wallet(merchant_id, amount):
         if float(amount) <= 0:
             return {"success": False, "error": "Amount must be positive"}
 
-        # 1. Find Active Virtual Account for Merchant
-        va_account = frappe.db.get_value("Virtual Account", {"merchant": merchant_id, "status": "Active"}, "account_number")
-        if not va_account:
-            # Fallback to any account if no active one, or error
-            va_account = frappe.db.get_value("Virtual Account", {"merchant": merchant_id}, "account_number")
-            
-        if not va_account:
-            return {"success": False, "error": "No Virtual Account found for this merchant. Cannot recharge."}
 
         frappe.set_user(merchant_id)
-        # 2. Create Virtual Account Log (This triggers wallet update via system hooks)
+        merchant = frappe.get_doc("Merchant", merchant_id)
+        merchant_account_id = 0
+        if wallet_type == "Payin":
+            merchant_account_id = int(merchant.payin_tigerbeetle_id)
+
+        elif wallet_type == "Payout":
+            merchant_account_id = int(merchant.tigerbeetle_id)
+
+        if not merchant_account_id:
+            frappe.throw("Merchant TigerBeetle account not found.")
+            return
+
+        client = get_client()
+
+        system_account_id = 1
+
+        accounts = client.lookup_accounts([merchant_account_id])
+        if not accounts:
+            frappe.throw("Merchant TigerBeetle account not found.")
+            return
+
+        acc = accounts[0]
+
+        opening_balance = (
+            acc.credits_posted
+            - acc.debits_posted
+            - acc.debits_pending
+        ) / 100
+
+        # Convert to smallest unit (paise)
+        original_amount = amount
+        amount = int(Decimal(amount) * 100)
+
+        if action == "Credit":
+            debit_id = system_account_id
+            credit_id = merchant_account_id
+        else:  # Debit
+            debit_id = merchant_account_id
+            credit_id = system_account_id
+
+        transfer = tb.Transfer(
+            id=tb.id(),
+            debit_account_id=debit_id,
+            credit_account_id=credit_id,
+            amount=amount,
+            pending_id=0,
+            user_data_128=0,
+            user_data_64=0,
+            user_data_32=0,
+            timeout=0,
+            ledger=1,
+            code=300,
+            flags=0,
+            timestamp=0,
+        )
+
+        errors = client.create_transfers([transfer])
+
+        if errors:
+            error = errors[0]
+            frappe.throw(f"TigerBeetle transfer failed: {error.result}")
+
+        # Fetch updated balance
+        accounts = client.lookup_accounts([merchant_account_id])
+        account = accounts[0]
+
+        closing_balance = (account.credits_posted - account.debits_posted - account.debits_pending) / 100
+
         import time
         utr = f"ADM-RECH-{int(time.time())}"
-        
+
+        ledger_entry = frappe.get_doc({
+            "doctype": "Ledger",
+            "order": wallet_type,
+            "transaction_type": action,  # Credit or Debit
+            "transaction_amount": float(original_amount),
+            "status": "Success",
+            "transaction_id": utr,
+            "merchant": merchant_id,
+            "opening_balance": opening_balance,
+            "closing_balance": closing_balance
+        }).insert(ignore_permissions=True)
+        ledger_entry.submit()
+
         log = frappe.get_doc({
             "doctype": 'Virtual Account Logs',
-            "account_number": va_account,
-            "transaction_type": "Credit",
-            "amount": float(amount),
+            "account_number": wallet_type,
+            "transaction_type": action,
+            "amount": float(original_amount),
             "utr": utr,
             "remitter_name": "Admin",
             "remitter_ifsc_code": "ADM000",
             "remitter_account_number": "ADMINWALLET",
             "status": "Success",
-            "merchant": merchant_id, # Ensure link
-            "owner": merchant_id     # Ensure owner is set to merchant for visibility
-        })
-        log.flags.ignore_permissions = True
-        log.insert()
+            "opening_balance": opening_balance,
+            "closing_balance": closing_balance,
+            "merchant": merchant_id,
+            "owner": merchant_id
+        }).insert(ignore_permissions=True)
+        log.submit()
 
         frappe.db.commit()
-        
-        # 3. Fetch new balance to return
-        wallet_bal = frappe.db.get_value("Wallet", {"merchant_id": merchant_id}, "balance") or 0
-        
-        return {"success": True, "new_balance": wallet_bal}
+
+        return {"success": True, "message": "Wallet Updated"}
 
     except Exception as e:
         frappe.db.rollback()

@@ -22,6 +22,7 @@
   "contact_detail",
   "status",
   "integration",
+  "payin_processor",
   "onboarding_completed",
   "logo",
   "note",
@@ -289,12 +290,17 @@
    "fieldname": "payin_tigerbeetle_id",
    "fieldtype": "Data",
    "label": "Payin TigerBeetle ID"
+  },
+  {
+   "fieldname": "payin_processor",
+   "fieldtype": "Data",
+   "label": "Payin Processor"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-03 12:49:12.071848",
+ "modified": "2026-04-04 01:54:13.578503",
  "modified_by": "Administrator",
  "module": "iSwitch",
  "name": "Merchant",

@@ -12,18 +12,18 @@ TRANSACTION_STATUS_EVENT_MAP = {
     "Topup Failed": "TOPUP_FAILED",
 }
 
-def dispatch(transaction_name: str, merchant: str, status: str):
+def dispatch(name: str, merchant: str, status: str):
     """Enqueue webhook dispatch — non-blocking."""
     frappe.enqueue(
         "iswitch.webhook_dispatcher.send_webhook",
-        transaction_name=transaction_name,
+        order_name=name,
         merchant=merchant,
         status=status,
         queue="short",
         timeout=300,
     )
 
-def send_webhook(transaction_name: str, merchant: str, status: str):
+def send_webhook(order_name: str, merchant: str, status: str):
     """
     Fetch merchant's webhook URL and POST transaction payload.
     Called in background via frappe.enqueue.
@@ -37,14 +37,14 @@ def send_webhook(transaction_name: str, merchant: str, status: str):
 
         event = TRANSACTION_STATUS_EVENT_MAP.get(status, "UNKNOWN")
         
-        doc = frappe.get_doc("Transaction",transaction_name)
+        doc = frappe.get_doc("Order",order_name)
 
         payload = {
             "event": event,
-            "crn": doc.order,
+            "crn": doc.name,
             "clientRefID": doc.client_ref_id,
             "status": status,
-            "utr": doc.transaction_reference_id,
+            "utr": doc.utr,
             "timestamp": str(now_datetime())
         }
 
@@ -57,8 +57,7 @@ def send_webhook(transaction_name: str, merchant: str, status: str):
 
         # Log the attempt
         _log_webhook(
-            order_name=doc.order,
-            transaction_name=transaction_name,
+            order_name=doc.name,
             webhook_url=webhook_url,
             payload=payload,
             status_code=response.status_code,
@@ -71,11 +70,11 @@ def send_webhook(transaction_name: str, merchant: str, status: str):
         frappe.log_error("Webhook Dispatch Error", frappe.get_traceback())
 
 
-def _log_webhook(order_name, transaction_name, webhook_url, payload, status_code, response_text, success, merchant):
+def _log_webhook(order_name, webhook_url, payload, status_code, response_text, success, merchant):
     """Persist webhook attempt log using Frappe's built-in Webhook Request Log."""
     frappe.get_doc({
         "doctype": "Webhook Request Log",
-        "reference_document": transaction_name,   # Data field — plain string
+        "reference_document": order_name,   # Data field — plain string
         "webhook": merchant,
         "url": webhook_url,
         "data": json.dumps(payload, indent=2),    # JSON Code field

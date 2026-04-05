@@ -16,19 +16,18 @@ from iswitch.order_webhook_handlers import (
             handle_transaction_success
         )
 
-def handle_transaction(doc):
+def handle_transaction(order_name):
     try:
-        transaction = frappe.get_doc("Transaction",doc.transaction_id)
-        order = frappe.get_doc("Order",transaction.order)
+        order = frappe.get_doc("Order", order_name)
         if order.product =="UPI":
-            upi_transaction_processing(order,transaction)
+            upi_transaction_processing(order)
         else:
-            other_transaction_processing(order,transaction)
+            other_transaction_processing(order)
             
     except Exception as e:
         frappe.log_error("Error in transaction handling",str(e))
 
-def upi_transaction_processing(doc ,transaction):
+def upi_transaction_processing(doc):
     try:
         doc.status = "Processing"
         doc.save(ignore_permissions=True)
@@ -43,43 +42,7 @@ def upi_transaction_processing(doc ,transaction):
         utr = ""
         crn = ""
 
-        if processor.name == "Airtel Payment Bank":
-            headers = {
-                "Content-Type": "application/v2+json "
-            }
-            
-            payload = {
-                "amount": str(doc.order_amount),
-                "feSessionId": doc.name,
-                "hdnOrderID": doc.name,
-                "mid": processor.get_password("client_id"),
-                "payeeVirtualAdd": processor.vpa,
-                "payerMobNo": "9031620313",
-                "payerVirtualAdd": doc.vpa,
-                "remarks": "Payout",
-                "ver": "2.0"
-            }
-
-            hash_string = get_hash_string(payload, processor.get_password("secret_key"))
-            hash_code = hashlib.sha512(hash_string.encode('utf-8')).hexdigest()
-
-            payload["hash"] = hash_code
-            
-            url = processor.api_endpoint.rstrip("/") + "/merchant-upi-service/upimercollect"
-            frappe.log_error("Request",f"Payload: {payload} url:{url}")
-            api_response = requests.post(url, headers = headers, json = payload, timeout = 30)
-
-            try:
-                api_data = api_response.json()
-                frappe.log_error("API Response", api_data)
-                crn = api_data.get("txnId", "")
-                utr = api_data.get("rrn", "")
-                remark = api_data.get("messageText", "")
-
-            except Exception as e:
-                frappe.log_error("API Response", api_response.text)
-        
-        elif processor.name == "PAYPROCESS2602140315":
+        if processor.name == "PAYPROCESS2602140315":
             payload = {
                 "order_id": doc.name,
                 "amount": str(doc.order_amount)
@@ -100,26 +63,17 @@ def upi_transaction_processing(doc ,transaction):
         if status == "Failed" or status == "Reversed":
 
             handle_transaction_failure(doc.name, status, remark)
-
-        elif status == "Success":
-            handle_transaction_success(doc.name, status, crn)
         
         elif status == "Pending":
-            txn = frappe.db.get_value("Transaction",{"order":doc.name, "merchant":doc.merchant_ref_id}, ['name'])
-            transaction = frappe.get_doc("Transaction", txn)
-            
-            transaction.status = status
-            transaction.crn = crn
-            transaction.transaction_reference_id = utr
-            transaction.remark = remark
-            transaction.save(ignore_permissions=True)
+            frappe.db.set_value("Order", doc.name, {"utr": utr, "crn": crn})
+
         frappe.db.commit()
     except Exception as e:
-        frappe.db.rollback(save_point = "process_transaction")
+        frappe.db.rollback(save_point="process_transaction", update_modified=False)
         frappe.log_error("Error in transaction processing",str(e))
 
 
-def other_transaction_processing(doc,transaction):
+def other_transaction_processing(doc):
     try:
         doc.status = "Processing"
         doc.save(ignore_permissions=True)
@@ -221,25 +175,14 @@ def other_transaction_processing(doc,transaction):
 
         if status == "Failed" or status == "Reversed":
             handle_transaction_failure(doc.name, status, remark)
-
-        elif status == "Success":
-            handle_transaction_success(doc.name, status, utr)
-        
+            
         elif status == "Pending":
-            txn = frappe.db.get_value("Transaction",{"order":doc.name, "merchant":doc.merchant_ref_id}, "name")
-            transaction = frappe.get_doc("Transaction", txn)
-            
-            transaction.status = status
-            transaction.crn = crn
-            transaction.transaction_reference_id = utr
-            transaction.remark = remark
-            transaction.save(ignore_permissions=True)
+            frappe.db.set_value("Order", doc.name, {"utr": utr, "crn": crn}, update_modified=False)
+        
+        frappe.db.commit()
 
-            doc.utr = utr
-            doc.save(ignore_permissions=True)
-            
     except Exception as e:
-        frappe.db.rollback(save_point = "process_transaction")
+        frappe.db.rollback(save_point="process_transaction")
         frappe.log_error("Error in transaction processing",e)
 
 
@@ -422,19 +365,11 @@ def process_order(order_name):
             - acc_after.debits_pending
         ) / 100
 
-        # 🔹 4️⃣ Create Frappe Ledger Entry (Authorized)
-        transaction_id = frappe.db.get_value(
-            "Transaction",
-            {"order": doc.name, "merchant": doc.merchant_ref_id},
-            ["name"]
-        )
-
         ledger = frappe.get_doc({
             "doctype": "Ledger",
             "order": doc.name,
             "transaction_type": "Debit",
             "status": "Success",
-            "transaction_id": transaction_id,
             "client_ref_id": doc.client_ref_id,
             "opening_balance": opening_balance,
             "closing_balance": closing_balance
@@ -445,7 +380,7 @@ def process_order(order_name):
         frappe.db.commit()  # Commit before external call
 
         frappe.enqueue("iswitch.transaction_processing.handle_transaction",
-            doc = ledger,
+            order_name = order_name,
             queue="long",
             timeout=300
         )
@@ -461,14 +396,6 @@ def cancel_order(order_name):
             UPDATE `tabOrder`
             SET status = 'Cancelled', modified = NOW()
             WHERE name = %s
-        """, (order_name,))
-
-        frappe.db.sql("""
-            UPDATE `tabTransaction`
-            SET status = 'Failed',
-                docstatus = 1,
-                modified = NOW()
-            WHERE `order` = %s
         """, (order_name,))
 
     except Exception as e:

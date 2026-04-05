@@ -293,7 +293,7 @@ def process_asianpay_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
             frappe.log_error("Missing order_id in Asian Pay webhook", "Asian Pay Webhook")
             return {"success": False, "error": "Missing order_id"}
         
-        order_id = frappe.db.get_value("Transaction",{"crn":gateway_order_id},"order")
+        order_id = frappe.db.get_value("Order",{"crn":gateway_order_id},"name")
         
         if not order_id:
             frappe.log_error("AsianPay Webhook Error", f"Order not found for CRN: {gateway_order_id}")

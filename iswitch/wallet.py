@@ -226,17 +226,17 @@ def topup_order():
         }).insert(ignore_permissions=True)
 
 
-        # CREATE TRANSACTION
-        transaction = frappe.get_doc({
-            "doctype": 'Transaction',
-            "order": order.name,
-            "merchant": order.merchant_ref_id,
-            "amount": order.transaction_amount,
-            "integration": processor.name,
-            "status": "Processing",
-            "product": order.product,
-            "transaction_date": frappe.utils.now()
-        }).insert(ignore_permissions=True)
+        # # CREATE TRANSACTION
+        # transaction = frappe.get_doc({
+        #     "doctype": 'Transaction',
+        #     "order": order.name,
+        #     "merchant": order.merchant_ref_id,
+        #     "amount": order.transaction_amount,
+        #     "integration": processor.name,
+        #     "status": "Processing",
+        #     "product": order.product,
+        #     "transaction_date": frappe.utils.now()
+        # }).insert(ignore_permissions=True)
         
         
         # 🔹 CREATE PENDING TIGERBEETLE TRANSFER (Authorization Hold)
@@ -306,33 +306,8 @@ def topup_order():
             frappe.log_error("Error creating topup PENDING transfer", frappe.get_traceback())
             frappe.throw(f"Failed to create topup authorization: {str(e)}")
         
-        # 🔹 CREATE PENDING VIRTUAL ACCOUNT LOG
-        # This will be marked as Success when webhook arrives
-        try:
-            # Get merchant's virtual account (if exists)
-            virtual_account = None
-            if frappe.db.exists("Virtual Account", {"merchant": merchant.name}):
-                virtual_account = frappe.get_value("Virtual Account", {"merchant": merchant.name}, "name")
-            
-            van_log = frappe.get_doc({
-                "doctype": "Virtual Account Logs",
-                "account_number": virtual_account if virtual_account else None,  # Optional field
-                "merchant": merchant.name,
-                "merchant_email": merchant.name,  # Using merchant name as email field
-                "amount": order.transaction_amount,
-                "transaction_type": "Credit",
-                "status": "Pending",
-                "utr": order.name,  # Use order name as temporary UTR
-            })
-            van_log.insert(ignore_permissions=True)
-            
-            # frappe.log_error(f"Virtual Account Log created for topup: {order.name}", "Topup VAN Log")
         
-        except Exception as e:
-            frappe.log_error("Error creating virtual account log", frappe.get_traceback())
-            # Don't throw - this is not critical for order processing
-        
-        # frappe.db.commit()
+        #frappe.db.commit()
         crn = None
         qr = None
         status = None
@@ -440,7 +415,7 @@ def topup_order():
                 "redirectUrl":"https://example.com"
             }
             url = processor.api_endpoint.rstrip("/") + "/payin/pg"
-            response = request.post(url, headers=headers, payload = payload, timeout=(3,10))
+            response = requests.post(url, headers=headers, json=payload, timeout=(3,10))
             api_response = None
             try:
                 api_response = response.json()
@@ -460,13 +435,9 @@ def topup_order():
                 status = "Failed"
 
         if status == "Success":
-            order.status = "Processing"
-            order.save(ignore_permissions=True)
-
-            transaction.status = "Pending"
-            transaction.crn = crn
-            transaction.remark = remark
-            transaction.save(ignore_permissions=True)
+            
+            frappe.db.set_value("Order", order.name,{"status":"Processing", "crn": crn, "reason": remark})
+            
             response = {
                 "code":"0x0200",
                 "status": "Success",

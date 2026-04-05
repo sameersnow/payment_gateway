@@ -137,6 +137,7 @@ export const adminMethods = {
     reactivateMerchant: 'iswitch.admin_portal_api.reactivate_merchant',
     sendMerchantNotification: 'iswitch.admin_portal_api.send_merchant_notification',
     updateMerchantPricing: 'iswitch.admin_portal_api.update_merchant_pricing',
+    updateWalletBalance: 'iswitch.admin_portal_api.credit_wallet',
 
     // Platform Settings
     getPlatformSettings: 'iswitch.admin_portal_api.get_platform_settings',

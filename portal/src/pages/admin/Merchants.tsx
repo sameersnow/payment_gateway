@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, MoreVertical, Building2, Clock, Ban, ArrowUpRight, ShieldCheck, User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Search, MoreVertical, Building2, Clock, Ban, ArrowUpRight, ShieldCheck, User, Mail, Lock, Eye, EyeOff, Wallet, Pen} from 'lucide-react';
 import { DashboardLayout } from '../../components/layout';
 import { Card, Badge, Button, Dropdown, DropdownItem, DropdownSeparator, Modal, Input, useToast } from '../../components/ui';
 import { formatCurrency, formatRelativeTime } from '../../utils/formatters';
@@ -84,6 +84,41 @@ export function Merchants() {
   // Termination State
   const [terminationTarget, setTerminationTarget] = useState<string | null>(null);
   const [terminationLoading, setTerminationLoading] = useState(false);
+  // Update Balance State
+  const [balanceTarget, setBalanceTarget] = useState<string | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balanceAmount, setBalanceAmount] = useState('');
+  const [balanceAction, setBalanceAction] = useState<'Credit' | 'Debit'>('Credit');
+  const [walletType, setWalletType] = useState<'Payin' | 'Payout'>('Payin');
+  const { call: updateWalletBalance } = useFrappePostCall(adminMethods.updateWalletBalance);
+
+  const confirmUpdateBalance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!balanceTarget || !balanceAmount) return;
+
+    try {
+      setBalanceLoading(true);
+      const res = await updateWalletBalance({
+        merchant_id: balanceTarget,
+        amount: parseFloat(balanceAmount),
+        action: balanceAction,
+        wallet_type: walletType,
+      });
+
+      if (res?.message?.success) {
+        success('Success', res.message.message);
+        setBalanceTarget(null);
+        setBalanceAmount('');
+        refetch();
+      } else {
+        errorToast('Error', res?.message?.error || 'Failed to update balance');
+      }
+    } catch (error: any) {
+      errorToast('Error', error.message || 'Failed to update balance');
+    } finally {
+      setBalanceLoading(false);
+    }
+  };
 
   // Handle Add New Merchant
   const handleAddMerchant = async (e: React.FormEvent) => {
@@ -184,6 +219,12 @@ export function Merchants() {
     rejected: apiCounts.Rejected || 0,
     suspended: apiCounts.Suspended || 0,
     terminated: apiCounts.Terminated || 0,
+  };
+  const openBalanceModal = (merchantName: string) => {
+    setBalanceTarget(merchantName);
+    setBalanceAmount('');
+    setBalanceAction('Credit');
+    setWalletType('Payin'); // reset to default
   };
 
   return (
@@ -383,11 +424,17 @@ export function Merchants() {
                             >
                               Transactions
                             </DropdownItem>
-                            <DropdownSeparator />
                             <DropdownItem
+                              icon = {<Pen className="w-4 h-4"/>}
                               onClick={() => navigate(`/admin/merchants/${merchant.name}?tab=configuration`)}
                             >
                               Edit configuration
+                            </DropdownItem>
+                            <DropdownItem
+                              icon={<Wallet className="w-4 h-4" />}
+                              onClick={() => openBalanceModal(merchant.name)}
+                            >
+                              Update balance
                             </DropdownItem>
                             <DropdownSeparator />
                             {merchant.status !== 'Terminated' && (
@@ -461,6 +508,90 @@ export function Merchants() {
             </Button>
           </div>
         </div>
+      </Modal>
+      {/* Update Balance Modal */}
+      <Modal
+        isOpen={balanceTarget !== null}
+        onClose={() => !balanceLoading && setBalanceTarget(null)}
+        title="Update Wallet Balance"
+      >
+        <form onSubmit={confirmUpdateBalance} className="space-y-4">
+          <div className="flex gap-4 mb-4">
+            <button
+              type="button"
+              onClick={() => setBalanceAction('Credit')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${balanceAction === 'Credit'
+                  ? 'bg-success-50 text-success-700 border-success-200'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+            >
+              Credit
+            </button>
+            <button
+              type="button"
+              onClick={() => setBalanceAction('Debit')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${balanceAction === 'Debit'
+                  ? 'bg-error-50 text-error-700 border-error-200'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+            >
+              Debit
+            </button>
+          </div>
+          {/* Wallet Type Selector */}
+          <div className="flex gap-4">
+            <button
+              type="button"
+              onClick={() => setWalletType('Payin')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                walletType === 'Payin'
+                  ? 'bg-primary-50 text-primary-700 border-primary-200'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              Payin
+            </button>
+            <button
+              type="button"
+              onClick={() => setWalletType('Payout')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                walletType === 'Payout'
+                  ? 'bg-primary-50 text-primary-700 border-primary-200'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              Payout
+            </button>
+          </div>
+          <Input
+            label="Amount (₹)"
+            type="number"
+            min="1"
+            step="0.01"
+            placeholder="0.00"
+            value={balanceAmount}
+            onChange={(e) => setBalanceAmount(e.target.value)}
+            required
+          />
+
+          <div className="flex gap-3 justify-end pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setBalanceTarget(null)}
+              disabled={balanceLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant={balanceAction === 'Credit' ? 'success' : 'danger'}
+              loading={balanceLoading}
+            >
+              {balanceAction} Wallet
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       {/* Add New Merchant Dialog */}

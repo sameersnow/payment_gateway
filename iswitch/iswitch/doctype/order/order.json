@@ -11,17 +11,16 @@
   "order_amount",
   "product",
   "merchant_ref_id",
-  "bank",
   "channel",
   "processor_order_id",
   "column_break_vnsu",
   "client_ref_id",
   "purpose",
   "status",
-  "integration_id",
   "order_type",
   "section_break_emwh",
   "customer_name",
+  "bank",
   "vpa",
   "column_break_xhda",
   "customer_account_number",
@@ -36,7 +35,13 @@
   "section_break_hiho",
   "utr",
   "column_break_bmiv",
-  "reason"
+  "reason",
+  "column_break_qijt",
+  "updated_at",
+  "processor_detail_section",
+  "integration_id",
+  "column_break_opas",
+  "crn"
  ],
  "fields": [
   {
@@ -208,13 +213,36 @@
    "fieldtype": "Data",
    "label": "Processor Order ID",
    "search_index": 1
+  },
+  {
+   "fieldname": "column_break_qijt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "updated_at",
+   "fieldtype": "Datetime",
+   "label": "Updated At"
+  },
+  {
+   "fieldname": "processor_detail_section",
+   "fieldtype": "Section Break",
+   "label": "Processor Detail"
+  },
+  {
+   "fieldname": "column_break_opas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "crn",
+   "fieldtype": "Data",
+   "label": "CRN"
   }
  ],
  "grid_page_length": 50,
  "hide_toolbar": 1,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-03-02 18:09:40.466870",
+ "modified": "2026-04-04 00:36:59.212619",
  "modified_by": "Administrator",
  "module": "iSwitch",
  "name": "Order",

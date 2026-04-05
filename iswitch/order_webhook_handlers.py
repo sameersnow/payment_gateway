@@ -31,13 +31,12 @@ def handle_topup_success(order_name, transaction_reference_id):
         transaction_reference_id: UTR/RRN from payment gateway
     """
     try:
-        order = frappe.db.get_value("Order", order_name, ["name", "merchant_ref_id", "transaction_amount", "client_ref_id"], as_dict=True)
-        transaction = frappe.db.get_value("Transaction", {"order": order_name}, ["name", "docstatus"], as_dict=True)
+        order = frappe.db.get_value("Order", order_name, ["name", "status", "merchant_ref_id", "transaction_amount", "client_ref_id"], as_dict=True)
         
-        # Check if already processed
-        if is_already_processed(transaction, order_name):
+        if order.status not in ["Processing", "Queued"]:
+            frappe.log_error(f"Order {order_name} not in Processing/Queued state, skipping capture", "Skip")
             return
-        
+
         merchant_tb_id = frappe.db.get_value("Merchant", order.merchant_ref_id, "payin_tigerbeetle_id")
         if not merchant_tb_id:
             raise Exception("Merchant Payin TigerBeetle account not configured")
@@ -94,8 +93,7 @@ def handle_topup_success(order_name, transaction_reference_id):
                 raise Exception(f"Failed to capture topup: {error.result}")
         
         
-        frappe.db.set_value("Order", order_name, {"status": "Processed", "utr": transaction_reference_id})
-        frappe.db.set_value("Transaction", {"order": order_name}, {"status": "Success", "transaction_reference_id": transaction_reference_id, "docstatus": 1})
+        frappe.db.set_value("Order", order_name, {"status": "Processed", "utr": transaction_reference_id, "updated_at": now()}, update_modified=False)
         
         # Get updated balance after POST
         acc_after = client.lookup_accounts([merchant_account_id])[0]
@@ -112,19 +110,13 @@ def handle_topup_success(order_name, transaction_reference_id):
             "transaction_type": "Credit",
             "transaction_amount": order.transaction_amount,
             "status": "Success",
-            "transaction_id": transaction.name,
             "client_ref_id": order.client_ref_id,
             "opening_balance": opening_balance,
             "closing_balance": closing_balance
         }).insert(ignore_permissions=True)
         ledger.submit()
         
-        frappe.db.set_value(
-            "Virtual Account Logs",
-            {"utr": order.name, "status": "Pending"},
-            {"status": "Success", "utr": transaction_reference_id, "opening_balance": opening_balance, "closing_balance": closing_balance, "docstatus": 1}
-        )
-        dispatch(transaction.name, order.merchant_ref_id, "Topup Success")
+        dispatch(order_name, order.merchant_ref_id, "Topup Success")
     except Exception as e:
         frappe.log_error("Error in topup success handler", frappe.get_traceback())
         raise
@@ -141,10 +133,9 @@ def handle_topup_failure(order_name, status, error_message):
     """
     try:
         order = frappe.db.get_value("Order", order_name, ["name", "status", "merchant_ref_id", "transaction_amount"], as_dict=True)
-        transaction = frappe.db.get_value("Transaction", {"order": order_name}, ["name", "docstatus"], as_dict=True)
         
-        # Check if already processed
-        if is_already_processed(transaction, order_name):
+        if order.status not in ["Processing", "Queued"]:
+            frappe.log_error(f"Order {order_name} not in Processing/Queued state, skipping void", "Skip")
             return
         
         merchant_tb_id = frappe.db.get_value("Merchant", order.merchant_ref_id, "payin_tigerbeetle_id")
@@ -196,16 +187,9 @@ def handle_topup_failure(order_name, status, error_message):
                 raise Exception(f"Failed to void topup: {error.result}")
         
         
-        frappe.db.set_value("Order", order_name, {"status": status, "reason": error_message[:100] if error_message else "Payment failed"})
+        frappe.db.set_value("Order", order_name, {"status": status, "updated_at": now(), "reason": error_message[:100] if error_message else "Payment failed"})
         
-        
-        frappe.db.set_value("Transaction", {"order": order_name}, {"status": status, "remark": error_message, "docstatus": 1})
-        frappe.db.set_value(
-            "Virtual Account Logs",
-            {"utr": order.name, "status": "Pending"},
-            {"status": "Failed", "docstatus": 1}
-        )
-        dispatch(transaction.name, order.merchant_ref_id, "Topup Failed")
+        dispatch(order_name, order.merchant_ref_id, "Topup Failed")
     except Exception as e:
         frappe.log_error("Error in topup failure handler", frappe.get_traceback())
         raise
@@ -405,12 +389,12 @@ def handle_transaction_failure(name, status, error_message):
         doc = frappe.db.get_value(
             "Order",
             name,
-            ["name", "merchant_ref_id", "transaction_amount","client_ref_id"],
+            ["name", "status", "merchant_ref_id", "transaction_amount","client_ref_id"],
             as_dict=True
         )
-        transaction = frappe.db.get_value("Transaction", {"order": name}, ["name","docstatus"], as_dict=True)
-        
-        if is_already_processed(transaction, name):
+
+        if doc.status != "Processing":
+            frappe.log_error(f"Order {name} not in Processing state, skipping void", "Skip")
             return
 
         # merchant = frappe.get_doc("Merchant", doc.merchant_ref_id)
@@ -483,18 +467,8 @@ def handle_transaction_failure(name, status, error_message):
             doc.name,
             {
                 "status":f"{status}",
-                "reason": error_message
-            },
-            update_modified=False
-        )
-
-        frappe.db.set_value(
-            "Transaction",
-            {"order": doc.name},
-            {
-                "status": f"{status}",
-                "remark": error_message,
-                "docstatus": 1
+                "reason": error_message,
+                "updated_at": now()
             },
             update_modified=False
         )
@@ -504,13 +478,12 @@ def handle_transaction_failure(name, status, error_message):
             "order": doc.name,
             "transaction_type": 'Credit',
             'status': status,
-            'transaction_id': transaction.name,
             'client_ref_id': doc.client_ref_id,
             'opening_balance': opening_balance,
             "closing_balance": closing_balance
         }).insert(ignore_permissions=True)
         ledger.submit()
-        dispatch(transaction.name, doc.merchant_ref_id, status)
+        dispatch(name, doc.merchant_ref_id, status)
     except Exception as e:
         # frappe.db.rollback(save_point="webhook_process")
         frappe.log_error("Void Error", str(e))
@@ -521,10 +494,10 @@ def handle_transaction_success(name, status, transaction_reference_id):
     Capture authorized (pending) transfer on success webhook.
     """
     try:
-        doc = frappe.db.get_value("Order", name,["name", "merchant_ref_id", "transaction_amount","client_ref_id"], as_dict=True)
-        transaction = frappe.db.get_value("Transaction", {"order": name}, ["name","docstatus"], as_dict=True)
-
-        if is_already_processed(transaction, name):
+        doc = frappe.db.get_value("Order", name,["name", "status", "merchant_ref_id", "transaction_amount","client_ref_id"], as_dict=True)
+        
+        if doc.status != "Processing":
+            frappe.log_error(f"Order {name} not in Processing state, skipping capture", "Skip")
             return
 
         # merchant = frappe.get_doc("Merchant", doc.merchant_ref_id)
@@ -572,27 +545,19 @@ def handle_transaction_success(name, status, transaction_reference_id):
             if error.result != tb.CreateTransferResult.EXISTS:
                 raise Exception(f"Capture failed: {error.result}")
 
-        frappe.db.set_value(
-            "Transaction",
-            {"order": doc.name},
-            {
-                "status": f"{status}",
-                "transaction_reference_id": transaction_reference_id,
-                "docstatus": 1
-            },
-            update_modified=False
-        )
+        
         order_status = "Processed" if status == "Success" else status
         frappe.db.set_value(
             "Order",
             doc.name,
             {
                 "status":f"{order_status}",
-                "utr":transaction_reference_id
+                "utr":transaction_reference_id,
+                "updated_at": now()
             },
             update_modified=False
         )
-        dispatch(transaction.name, doc.merchant_ref_id, status)
+        dispatch(name, doc.merchant_ref_id, status)
     except Exception as e:
         # frappe.db.rollback(save_point="webhook_process")
         frappe.log_error("Capture Error", str(e))

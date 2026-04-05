@@ -161,7 +161,7 @@ export function OrderDetail() {
                 <div className="pt-3 border-t border-slate-200 flex justify-between">
                   <span className="text-base font-medium text-slate-900">Total</span>
                   <span className="text-base font-semibold text-slate-900">
-                    {formatCurrency((order.transaction_amount || order.amount) + (order.fee || 0) + (order.tax || 0))}
+                    {formatCurrency(order.transaction_amount || order.amount)}
                   </span>
                 </div>
               </div>
