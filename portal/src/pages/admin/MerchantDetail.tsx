@@ -393,6 +393,7 @@ export function MerchantDetail() {
     status: merchantData.status ? merchantData.status.toLowerCase() : 'draft',
     totalVolume: totalVolume,
     balance: merchantData.wallet_balance || 0,
+    payin_balance: merchantData.payin_balance || 0,
     lienBalance: merchantData.lien_balance || 0,
     website: merchantData.website || '',
     businessType: merchantData.business_type || 'Unspecified',
@@ -507,15 +508,15 @@ export function MerchantDetail() {
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
-            <p className="text-sm text-slate-500">Total Volume</p>
+            <p className="text-sm text-slate-500">Payin Balance</p>
             <p className="text-2xl font-semibold text-slate-900 mt-1">
-              {formatCurrency(merchant.totalVolume)}
+              {formatCurrency(merchant.payin_balance)}
             </p>
           </Card>
           <Card>
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-sm text-slate-500">Available Balance</p>
+                <p className="text-sm text-slate-500">Payout Balance</p>
                 <p className="text-2xl font-semibold text-slate-900 mt-1">
                   {formatCurrency(merchant.balance)}
                 </p>

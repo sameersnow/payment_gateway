@@ -459,7 +459,7 @@ def get_dashboard_chart_data(period='Last 7 days'):
         merchant_id = get_logged_in_merchant_id()
         
         if not merchant_id:
-            return {"labels": [], "revenue": [], "orders": []}
+            return {"labels": [], "payin": [], "payout": []}
 
         # Calculate date range
         days = 7
@@ -474,31 +474,20 @@ def get_dashboard_chart_data(period='Last 7 days'):
         data = frappe.db.sql("""
             SELECT 
                 DATE(creation) as date,
-                COUNT(*) as count,
-                SUM(CASE WHEN status = 'Processed' THEN order_amount ELSE 0 END) as revenue
+                SUM(CASE WHEN order_type = 'Topup' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payin,
+                SUM(CASE WHEN order_type = 'Pay' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payout
             FROM `tabOrder`
             WHERE merchant_ref_id = %s 
             AND creation >= %s
+            AND status = 'Processed'
             GROUP BY DATE(creation)
             ORDER BY date ASC
         """, (merchant_id, from_date), as_dict=True)
         
-        # Fill missing dates
         date_map = {str(d.date): d for d in data}
         labels = []
-        revenue_data = []
-        orders_data = []
-        
-        for i in range(days):
-            current_date = frappe.utils.add_days(from_date, i + 1) # Start from tomorrow relative to start, up to today roughly? Or verify range. 
-            # Actually standard is usually inclusive. Loop 0 to days-1 or similar.
-            # let's map properly.
-            pass
-
-        # Re-doing loop cleanly
-        labels = []
-        revenue_data = []
-        orders_data = []
+        payin_data = []
+        payout_data = []
         
         # We want data up to today
         today = frappe.utils.getdate(frappe.utils.nowdate())
@@ -511,23 +500,23 @@ def get_dashboard_chart_data(period='Last 7 days'):
             labels.append(curr.strftime("%b %d")) # Format: Jan 01
             
             if date_str in date_map:
-                revenue_data.append(float(date_map[date_str].revenue or 0))
-                orders_data.append(int(date_map[date_str].count or 0))
+                payin_data.append(float(date_map[date_str].payin or 0))
+                payout_data.append(float(date_map[date_str].payout or 0))
             else:
-                revenue_data.append(0)
-                orders_data.append(0)
+                payin_data.append(0)
+                payout_data.append(0)
             
             curr = frappe.utils.add_days(curr, 1)
             
         return {
             "labels": labels,
-            "revenue": revenue_data,
-            "orders": orders_data
+            "payin": payin_data,
+            "payout": payout_data
         }
 
     except Exception as e:
         frappe.log_error(f"Error in get_dashboard_chart_data: {str(e)}", "Merchant Portal API")
-        return {"labels": [], "revenue": [], "orders": []}
+        return {"labels": [], "payin": [], "payout": []}
 
 @frappe.whitelist()
 def get_van_logs(filter_data=None, page=1, page_size=20):

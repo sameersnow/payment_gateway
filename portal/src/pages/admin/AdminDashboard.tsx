@@ -102,8 +102,8 @@ export function AdminDashboard() {
   const chartDataRaw = dashboardData?.chart_data;
   const chartData = chartDataRaw?.categories?.map((date: string, index: number) => ({
     date,
-    orders: chartDataRaw.series[1]?.data[index] || 0,
-    revenue: chartDataRaw.series[0]?.data[index] || 0
+    payin: chartDataRaw.series[1]?.data[index] || 0,
+    payout: chartDataRaw.series[0]?.data[index] || 0
   })) || [];
 
   const merchants = merchantsData?.merchants || [];
@@ -142,7 +142,7 @@ export function AdminDashboard() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricCard
-              title="Total Volume"
+              title="Total Payout"
               value={formatCurrency(totalVolume)}
               change={`${dashboardData?.metric_trends?.volume_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.volume_change_pct || 0}% vs last month`}
               icon={DollarSign}
@@ -150,23 +150,23 @@ export function AdminDashboard() {
               color={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'success' : 'error'}
             />
             <MetricCard
-              title="Active Merchants"
-              value={activeMerchants.toString()}
-              change={`+${dashboardData?.metric_trends?.new_merchants_this_week || 0} this week`}
-              icon={Users}
-              trend="up"
-              color="slate"
+              title="Total Payin"
+              value={formatCurrency(totalVolume)}
+              change={`${dashboardData?.metric_trends?.volume_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.volume_change_pct || 0}% vs last month`}
+              icon={DollarSign}
+              trend={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'up' : 'down'}
+              color={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'success' : 'error'}
             />
             <MetricCard
-              title="Pending KYC"
-              value={pendingKYC.length.toString()}
-              icon={FileText}
-              change={`${dashboardData?.metric_trends?.new_kyc_today || 0} new today`}
-              trend="up"
-              color="warning"
+              title="Payout Success Rate"
+              value={`${successRate}%`}
+              change={`${dashboardData?.metric_trends?.success_rate_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.success_rate_change_pct || 0}% vs last week`}
+              icon={Activity}
+              trend={dashboardData?.metric_trends?.success_rate_change_pct >= 0 ? 'up' : 'down'}
+              color={dashboardData?.metric_trends?.success_rate_change_pct >= 0 ? 'success' : 'error'}
             />
             <MetricCard
-              title="Success Rate"
+              title="Payin Success Rate"
               value={`${successRate}%`}
               change={`${dashboardData?.metric_trends?.success_rate_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.success_rate_change_pct || 0}% vs last week`}
               icon={Activity}

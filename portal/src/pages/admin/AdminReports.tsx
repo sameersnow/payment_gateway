@@ -243,7 +243,6 @@ export function AdminReports() {
 
     const tabs = [
         { id: 'overview', label: 'Overview', icon: TrendingUp },
-        { id: 'transactions', label: 'Transactions', icon: CreditCard },
         { id: 'ledgers', label: 'Ledgers', icon: FileText },
         { id: 'settlements', label: 'Settlements', icon: Landmark }
     ];

@@ -50,14 +50,6 @@ def get_dashboard_stats(period='Last 30 days'):
     try:
         check_admin_permission()
         
-        # Get total wallet balance of all merchants
-        wallet_data = frappe.db.sql("""
-            SELECT SUM(balance) as total_balance
-            FROM `tabWallet`
-        """, as_dict=True)
-        
-        wallet_balance = wallet_data[0].total_balance if wallet_data and wallet_data[0].total_balance else 0
-        
         # Get global order statistics
         order_stats = frappe.db.sql("""
             SELECT 
@@ -113,10 +105,11 @@ def get_dashboard_stats(period='Last 30 days'):
         chart_data_query = """
             SELECT 
                 DATE(creation) as date,
-                SUM(CASE WHEN status = 'Processed' THEN COALESCE(order_amount, 0) ELSE 0 END) as revenue,
+                SUM(CASE WHEN order_type = 'Topup' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payin,
+                SUM(CASE WHEN order_type = 'Pay' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payout,
                 COUNT(*) as orders
             FROM `tabOrder`
-            WHERE creation >= %s
+            WHERE creation >= %s AND status = 'Processed'
             GROUP BY DATE(creation)
             ORDER BY date ASC
         """
@@ -125,8 +118,8 @@ def get_dashboard_stats(period='Last 30 days'):
         
         # Format chart data
         dates = []
-        revenue_series = []
-        orders_series = []
+        payin_series = []
+        payout_series = []
         
         # Create a map for quick lookup
         stats_map = {str(d.date): d for d in daily_stats}
@@ -141,8 +134,8 @@ def get_dashboard_stats(period='Last 30 days'):
             stat = stats_map.get(date_str, {})
             
             dates.append(date_str)
-            revenue_series.append(float(stat.get('revenue', 0)))
-            orders_series.append(int(stat.get('orders', 0)))
+            payin_series.append(float(stat.get('payin', 0)))
+            payout_series.append(float(stat.get('payout', 0)))
             
             curr = frappe.utils.add_days(curr, 1)
 
@@ -208,10 +201,6 @@ def get_dashboard_stats(period='Last 30 days'):
 
 
         return {
-            "wallet": {
-                "balance": float(wallet_balance),
-                "status": "Active" # Admin wallet/system status always active effectively
-            },
             "stats": {
                 "total_orders": int(stats.get('total_orders', 0)),
                 "processed_orders": int(stats.get('processed_orders', 0)),
@@ -239,12 +228,12 @@ def get_dashboard_stats(period='Last 30 days'):
                 "categories": dates,
                 "series": [
                     {
-                        "name": "Revenue",
-                        "data": revenue_series
+                        "name": "payin",
+                        "data": payin_series
                     },
                     {
-                        "name": "Orders",
-                        "data": orders_series
+                        "name": "payout",
+                        "data": payout_series
                     }
                 ]
             }
