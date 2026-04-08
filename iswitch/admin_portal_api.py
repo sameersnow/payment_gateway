@@ -50,19 +50,34 @@ def get_dashboard_stats(period='Last 30 days'):
     try:
         check_admin_permission()
         
-        # Get global order statistics
+        # Calculate date range based on period
+        days = 30  # Default
+        if period == 'Last 7 days':
+            days = 7
+        elif period == 'Last 90 days':
+            days = 90
+        elif period == 'This Year':
+            # Calculate days from start of year to today
+            today = frappe.utils.getdate(frappe.utils.nowdate())
+            start_of_year = frappe.utils.getdate(f"{today.year}-01-01")
+            days = (today - start_of_year).days + 1
+        
+        # Use frappe.utils for proper date handling
+        from_date = frappe.utils.add_days(frappe.utils.nowdate(), -days)
+
+        # Get global order statistics for the period
         order_stats = frappe.db.sql("""
             SELECT 
-                COUNT(*) as total_orders,
-                SUM(CASE WHEN status = 'Processed' THEN 1 ELSE 0 END) as processed_orders,
-                SUM(CASE WHEN status IN ('Pending', 'Processing', 'Queued') THEN 1 ELSE 0 END) as pending_orders,
-                SUM(CASE WHEN status IN ('Cancelled', 'Reversed') THEN 1 ELSE 0 END) as cancelled_orders,
-                SUM(CASE WHEN status = 'Processed' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as total_processed_amount,
-                SUM(CASE WHEN status IN ('Pending', 'Processing', 'Queued') THEN COALESCE(transaction_amount, 0) ELSE 0 END) as total_pending_amount,
-                SUM(CASE WHEN status IN ('Cancelled', 'Reversed') THEN COALESCE(transaction_amount, 0) ELSE 0 END) as total_cancelled_amount,
-                SUM(COALESCE(transaction_amount, 0)) as total_orders_amount
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Topup' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payin_total,
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Pay' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payout_total,
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Topup' THEN 1 ELSE 0 END) as processed_payin,
+                SUM(CASE WHEN status IN ('Cancelled', 'Reversed', 'Failed', 'Processed') AND order_type = 'Topup' THEN 1 ELSE 0 END) as attempted_payin,
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Pay' THEN 1 ELSE 0 END) as processed_payout,
+                SUM(CASE WHEN status IN ('Cancelled', 'Reversed', 'Failed', 'Processed') AND order_type = 'Pay' THEN 1 ELSE 0 END) as attempted_payout,
+                SUM(CASE WHEN status IN ('Pending', 'Processing', 'Queued') THEN 1 ELSE 0 END) as pending_orders
             FROM `tabOrder`
-        """, as_dict=True)
+            WHERE creation >= %s
+        """, (from_date,), as_dict=True)
 
         # Get pending settlements count
         settlement_stats = frappe.db.sql("""
@@ -86,20 +101,13 @@ def get_dashboard_stats(period='Last 30 days'):
         stats = order_stats[0] if order_stats else {}
         stats['pending_settlements'] = settlement_stats[0].pending_settlements if settlement_stats else 0
         
-        # Calculate date range based on period
-        days = 30  # Default
-        if period == 'Last 7 days':
-            days = 7
-        elif period == 'Last 90 days':
-            days = 90
-        elif period == 'This Year':
-            # Calculate days from start of year to today
-            today = frappe.utils.getdate(frappe.utils.nowdate())
-            start_of_year = frappe.utils.getdate(f"{today.year}-01-01")
-            days = (today - start_of_year).days + 1
-        
-        # Use frappe.utils for proper date handling
-        from_date = frappe.utils.add_days(frappe.utils.nowdate(), -days)
+        att_payin = float(stats.get('attempted_payin') or 0)
+        proc_payin = float(stats.get('processed_payin') or 0)
+        payin_rate = (proc_payin / att_payin * 100) if att_payin > 0 else 0.0
+
+        att_payout = float(stats.get('attempted_payout') or 0)
+        proc_payout = float(stats.get('processed_payout') or 0)
+        payout_rate = (proc_payout / att_payout * 100) if att_payout > 0 else 0.0
         
         # Get chart data
         chart_data_query = """
@@ -182,41 +190,45 @@ def get_dashboard_stats(period='Last 30 days'):
         last_7_start = today - timedelta(days=7)
         prev_7_start = today - timedelta(days=14)
         
-        def get_success_rate(start_date, end_date):
+        def get_success_rates(start_date, end_date):
             stats = frappe.db.sql("""
                 SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN status='Processed' THEN 1 ELSE 0 END) as processed
+                    SUM(CASE WHEN status IN ('Processed', 'Failed', 'Cancelled', 'Reversed') AND order_type = 'Topup' THEN 1 ELSE 0 END) as att_payin,
+                    SUM(CASE WHEN status='Processed' AND order_type = 'Topup' THEN 1 ELSE 0 END) as proc_payin,
+                    SUM(CASE WHEN status IN ('Processed', 'Failed', 'Cancelled', 'Reversed') AND order_type = 'Pay' THEN 1 ELSE 0 END) as att_payout,
+                    SUM(CASE WHEN status='Processed' AND order_type = 'Pay' THEN 1 ELSE 0 END) as proc_payout
                 FROM `tabOrder`
                 WHERE creation >= %s AND creation < %s
             """, (start_date, end_date), as_dict=True)
             
-            if not stats or not stats[0].total:
-                return 0.0
-            return (stats[0].processed / stats[0].total) * 100
+            if not stats: return 0.0, 0.0
+            s = stats[0]
+            pir = (s.proc_payin / s.att_payin * 100) if s.att_payin else 0.0
+            por = (s.proc_payout / s.att_payout * 100) if s.att_payout else 0.0
+            return pir, por
             
-        current_rate = get_success_rate(last_7_start, today + timedelta(days=1))
-        prev_rate = get_success_rate(prev_7_start, last_7_start)
-        rate_diff = current_rate - prev_rate
+        cur_payin_rate, cur_payout_rate = get_success_rates(last_7_start, today + timedelta(days=1))
+        prev_payin_rate, prev_payout_rate = get_success_rates(prev_7_start, last_7_start)
+        
+        payin_rate_diff = cur_payin_rate - prev_payin_rate
+        payout_rate_diff = cur_payout_rate - prev_payout_rate
 
 
         return {
             "stats": {
-                "total_orders": int(stats.get('total_orders', 0)),
-                "processed_orders": int(stats.get('processed_orders', 0)),
-                "pending_orders": int(stats.get('pending_orders', 0)),
-                "cancelled_orders": int(stats.get('cancelled_orders', 0)),
-                "total_processed_amount": float(stats.get('total_processed_amount', 0)),
-                "total_pending_amount": float(stats.get('total_pending_amount', 0)),
-                "total_cancelled_amount": float(stats.get('total_cancelled_amount', 0)),
-                "total_orders_amount": float(stats.get('total_orders_amount', 0)),
-                "pending_settlements": int(stats.get('pending_settlements', 0))
+                "payin_total": float(stats.get('payin_total') or 0),
+                "payout_total": float(stats.get('payout_total') or 0),
+                "payin_success_rate": round(payin_rate, 1),
+                "payout_success_rate": round(payout_rate, 1),
+                "pending_orders": int(stats.get('pending_orders') or 0),
+                "pending_settlements": int(stats.get('pending_settlements') or 0)
             },
             "metric_trends": {
                 "volume_change_pct": round(vol_pct, 1),
                 "new_merchants_this_week": new_merchants,
                 "new_kyc_today": new_kyc,
-                "success_rate_change_pct": round(rate_diff, 1)
+                "payin_success_rate_change_pct": round(payin_rate_diff, 1),
+                "payout_success_rate_change_pct": round(payout_rate_diff, 1)
             },
             "merchant_stats": {
                 "total": int(merch_stats.get('total', 0)),
@@ -777,11 +789,14 @@ def get_merchants(page=1, page_size=20, search_text=None, filter_data=None):
             # Get TB balances
             main_balance = 0.0
             lien_balance = 0.0
+            payin_balance = 0.0
             account_ids = []
             if merchant.get("tigerbeetle_id"):
                 account_ids.append(int(merchant["tigerbeetle_id"]))
             if merchant.get("lien_tigerbeetle_id"):
                 account_ids.append(int(merchant["lien_tigerbeetle_id"]))
+            if merchant.get("payin_tigerbeetle_id"):
+                account_ids.append(int(merchant["payin_tigerbeetle_id"]))
 
             try:
                 if account_ids:
@@ -792,11 +807,14 @@ def get_merchants(page=1, page_size=20, search_text=None, filter_data=None):
                             main_balance = available
                         elif merchant.get("lien_tigerbeetle_id") and acc.id == int(merchant["lien_tigerbeetle_id"]):
                             lien_balance = available
+                        elif merchant.get("payin_tigerbeetle_id") and acc.id == int(merchant["payin_tigerbeetle_id"]):
+                            payin_balance = available
             except Exception as tb_error:
                 frappe.log_error(f"TigerBeetle balance fetch failed: {tb_error}", "Admin Portal API")
             
             merchant["wallet_balance"] = main_balance
             merchant["lien_balance"] = lien_balance
+            merchant["payin_balance"] = payin_balance
 
             # Fetch child table: Product Pricing
             pricing = frappe.db.sql("""
@@ -944,7 +962,7 @@ def adjust_merchant_funds(merchant, type, amount, remark=None):
         return {"success": False, "error": str(e)}
 
 @frappe.whitelist()
-def update_merchant(merchant, status, integration=None, webhook=None, pricing=None, rejection_remark=None, documents_to_reupload=None):
+def update_merchant(merchant, status, integration=None, payin_processor=None, webhook=None, pricing=None, rejection_remark=None, documents_to_reupload=None):
     """Update merchant details, pricing, and register Webhook"""
     try:
         check_admin_permission()
@@ -954,6 +972,9 @@ def update_merchant(merchant, status, integration=None, webhook=None, pricing=No
         
         if integration is not None:
             doc.integration = integration
+        
+        if payin_processor is not None:
+            doc.payin_processor = payin_processor
         
         # Handle rejection remark
         if status == "Rejected":
@@ -1895,6 +1916,7 @@ def get_merchant_details(merchant_name):
 
         main_balance = 0.0
         lien_balance = 0.0
+        payin_balance = 0.0
 
         account_ids = []
 
@@ -1903,6 +1925,9 @@ def get_merchant_details(merchant_name):
 
         if merchant_doc.lien_tigerbeetle_id:
             account_ids.append(int(merchant_doc.lien_tigerbeetle_id))
+
+        if merchant_doc.payin_tigerbeetle_id:
+            account_ids.append(int(merchant_doc.payin_tigerbeetle_id))
 
         try:
             if account_ids:
@@ -1913,6 +1938,8 @@ def get_merchant_details(merchant_name):
                         main_balance = bal
                     elif merchant_doc.lien_tigerbeetle_id and acc.id == int(merchant_doc.lien_tigerbeetle_id):
                         lien_balance = bal
+                    elif merchant_doc.payin_tigerbeetle_id and acc.id == int(merchant_doc.payin_tigerbeetle_id):
+                        payin_balance = bal
         except Exception as tb_error:
             frappe.log_error(f"TigerBeetle balance fetch failed: {tb_error}", "Admin Portal API")
 
@@ -1927,6 +1954,7 @@ def get_merchant_details(merchant_name):
             "status": merchant_doc.status,
             "webhook": merchant_doc.webhook,
             "integration": merchant_doc.integration,
+            "payin_processor": merchant_doc.payin_processor if hasattr(merchant_doc, 'payin_processor') else None,
             "remark": merchant_doc.remark,
             "documents_to_reupload": merchant_doc.documents_to_reupload,
             "director_pan": merchant_doc.director_pan,
@@ -1935,6 +1963,7 @@ def get_merchant_details(merchant_name):
             "company_gst": merchant_doc.company_gst,
             "wallet_balance": main_balance,
             "lien_balance": lien_balance,
+            "payin_balance": payin_balance,
             "creation": merchant_doc.creation
         }
 

@@ -6,7 +6,8 @@ import { Login, Signup, ForgotPassword, TwoFactorVerify } from './pages/auth';
 import { Onboarding, OnboardingComplete } from './pages/onboarding';
 import { Dashboard } from './pages/dashboard';
 import { DepositFunds } from './pages/wallet';
-import { Transactions, TransactionDetail } from './pages/transactions';
+// Transaction doctype is out of use — routes disabled
+// import { Transactions, TransactionDetail } from './pages/transactions';
 import { Orders, OrderDetail } from './pages/orders';
 import { Ledger } from './pages/ledger';
 import { Settlements, SettlementDetail } from './pages/settlements';
@@ -16,7 +17,9 @@ import { APIKeys } from './pages/developers/APIKeys';
 import { Webhooks, APILogs, IPWhitelist, WebhookLogs } from './pages/developers';
 import { Profile, Security, KYC, Team } from './pages/settings';
 import { Notifications } from './pages/Notifications';
-import { AdminDashboard, Merchants, MerchantDetail, KYCReviews, AdminTransactions, AdminSettings, AdminReports, TransactionDetail as AdminTransactionDetail, AdminOrderDetail, AdminOrders, AdminVANLogs, AdminVirtualAccounts, SettlementDetail as AdminSettlementDetail } from './pages/admin';
+import { AdminDashboard, Merchants, MerchantDetail, KYCReviews, AdminSettings, AdminReports, AdminOrderDetail, AdminOrders, AdminVANLogs, AdminVirtualAccounts, SettlementDetail as AdminSettlementDetail } from './pages/admin';
+// AdminTransactions and TransactionDetail disabled — Transaction doctype is out of use
+// import { AdminTransactions, TransactionDetail as AdminTransactionDetail } from './pages/admin';
 // Temporarily disabled - not implemented with real APIs:
 // import { WebhookDetail } from './pages/developers';
 // import { RiskAlerts, AdminUsers } from './pages/admin';
@@ -146,8 +149,9 @@ function App() {
             <Route path="/wallet" element={<Navigate to="/wallet/deposit" replace />} />
             <Route path="/wallet/deposit" element={<ProtectedRoute requireMerchant><DepositFunds /></ProtectedRoute>} />
 
-            <Route path="/transactions" element={<ProtectedRoute requireMerchant><Transactions /></ProtectedRoute>} />
-            <Route path="/transactions/:id" element={<ProtectedRoute requireMerchant><TransactionDetail /></ProtectedRoute>} />
+            {/* Transaction routes disabled — Transaction doctype is out of use */}
+            {/* <Route path="/transactions" element={<ProtectedRoute requireMerchant><Transactions /></ProtectedRoute>} /> */}
+            {/* <Route path="/transactions/:id" element={<ProtectedRoute requireMerchant><TransactionDetail /></ProtectedRoute>} /> */}
 
             <Route path="/orders" element={<ProtectedRoute requireMerchant><Orders /></ProtectedRoute>} />
             <Route path="/orders/:id" element={<ProtectedRoute requireMerchant><OrderDetail /></ProtectedRoute>} />
@@ -184,8 +188,9 @@ function App() {
             <Route path="/admin/merchants/:id" element={<ProtectedRoute requireAdmin><MerchantDetail /></ProtectedRoute>} />
             <Route path="/admin/orders" element={<ProtectedRoute requireAdmin><AdminOrders /></ProtectedRoute>} />
             <Route path="/admin/kyc-reviews" element={<ProtectedRoute requireAdmin><KYCReviews /></ProtectedRoute>} />
-            <Route path="/admin/transactions" element={<ProtectedRoute requireAdmin><AdminTransactions /></ProtectedRoute>} />
-            <Route path="/admin/transactions/:id" element={<ProtectedRoute requireAdmin><AdminTransactionDetail /></ProtectedRoute>} />
+            {/* Admin transaction routes disabled — Transaction doctype is out of use */}
+            {/* <Route path="/admin/transactions" element={<ProtectedRoute requireAdmin><AdminTransactions /></ProtectedRoute>} /> */}
+            {/* <Route path="/admin/transactions/:id" element={<ProtectedRoute requireAdmin><AdminTransactionDetail /></ProtectedRoute>} /> */}
             <Route path="/admin/orders/:id" element={<ProtectedRoute requireAdmin><AdminOrderDetail /></ProtectedRoute>} />
             {/* Risk Alerts and Admin Users temporarily disabled - not implemented with real APIs */}
             {/* <Route path="/admin/risk-alerts" element={<ProtectedRoute requireAdmin><RiskAlerts /></ProtectedRoute>} /> */}

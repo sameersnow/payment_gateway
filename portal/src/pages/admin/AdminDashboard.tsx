@@ -85,14 +85,11 @@ export function AdminDashboard() {
   );
 
   const defaultStats = {
-    total_orders: 0,
-    processed_orders: 0,
     pending_orders: 0,
-    cancelled_orders: 0,
-    total_processed_amount: 0,
-    total_pending_amount: 0,
-    total_cancelled_amount: 0,
-    total_orders_amount: 0,
+    payin_total: 0,
+    payout_total: 0,
+    payin_success_rate: 0,
+    payout_success_rate: 0,
     pending_settlements: 0,
   };
 
@@ -102,18 +99,19 @@ export function AdminDashboard() {
   const chartDataRaw = dashboardData?.chart_data;
   const chartData = chartDataRaw?.categories?.map((date: string, index: number) => ({
     date,
-    payin: chartDataRaw.series[1]?.data[index] || 0,
-    payout: chartDataRaw.series[0]?.data[index] || 0
+    payin: chartDataRaw.series[0]?.data[index] || 0,
+    payout: chartDataRaw.series[1]?.data[index] || 0
   })) || [];
 
   const merchants = merchantsData?.merchants || [];
   const pendingKYC = kycData?.submissions || [];
 
   // Calculate metrics
-  const totalVolume = stats.total_processed_amount || 0;
-  const totalOrders = stats.total_orders || 0;
-  const processedOrders = stats.processed_orders || 0;
-  const successRate = totalOrders > 0 ? ((processedOrders / totalOrders) * 100).toFixed(1) : '0.0';
+  const totalPayout = stats.payout_total || 0;
+  const totalPayin = stats.payin_total || 0;
+
+  const payinSuccessRate = stats.payin_success_rate || 0;
+  const payoutSuccessRate = stats.payout_success_rate || 0;
 
   // Count merchants by status
   const merchantStats = dashboardData?.merchant_stats || { active: 0, pending: 0, suspended: 0, total: 0 };
@@ -143,7 +141,7 @@ export function AdminDashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricCard
               title="Total Payout"
-              value={formatCurrency(totalVolume)}
+              value={formatCurrency(totalPayout)}
               change={`${dashboardData?.metric_trends?.volume_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.volume_change_pct || 0}% vs last month`}
               icon={DollarSign}
               trend={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'up' : 'down'}
@@ -151,7 +149,7 @@ export function AdminDashboard() {
             />
             <MetricCard
               title="Total Payin"
-              value={formatCurrency(totalVolume)}
+              value={formatCurrency(totalPayin)}
               change={`${dashboardData?.metric_trends?.volume_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.volume_change_pct || 0}% vs last month`}
               icon={DollarSign}
               trend={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'up' : 'down'}
@@ -159,19 +157,19 @@ export function AdminDashboard() {
             />
             <MetricCard
               title="Payout Success Rate"
-              value={`${successRate}%`}
-              change={`${dashboardData?.metric_trends?.success_rate_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.success_rate_change_pct || 0}% vs last week`}
+              value={`${payoutSuccessRate.toFixed(1)}%`}
+              change={`${dashboardData?.metric_trends?.payout_success_rate_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.payout_success_rate_change_pct || 0}% vs last week`}
               icon={Activity}
-              trend={dashboardData?.metric_trends?.success_rate_change_pct >= 0 ? 'up' : 'down'}
-              color={dashboardData?.metric_trends?.success_rate_change_pct >= 0 ? 'success' : 'error'}
+              trend={dashboardData?.metric_trends?.payout_success_rate_change_pct >= 0 ? 'up' : 'down'}
+              color={dashboardData?.metric_trends?.payout_success_rate_change_pct >= 0 ? 'success' : 'error'}
             />
             <MetricCard
               title="Payin Success Rate"
-              value={`${successRate}%`}
-              change={`${dashboardData?.metric_trends?.success_rate_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.success_rate_change_pct || 0}% vs last week`}
+              value={`${payinSuccessRate.toFixed(1)}%`}
+              change={`${dashboardData?.metric_trends?.payin_success_rate_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.payin_success_rate_change_pct || 0}% vs last week`}
               icon={Activity}
-              trend={dashboardData?.metric_trends?.success_rate_change_pct >= 0 ? 'up' : 'down'}
-              color={dashboardData?.metric_trends?.success_rate_change_pct >= 0 ? 'success' : 'error'}
+              trend={dashboardData?.metric_trends?.payin_success_rate_change_pct >= 0 ? 'up' : 'down'}
+              color={dashboardData?.metric_trends?.payin_success_rate_change_pct >= 0 ? 'success' : 'error'}
             />
           </div>
 
@@ -275,7 +273,7 @@ export function AdminDashboard() {
                           <p className="text-xs text-slate-500">Settlements to be cleared</p>
                         </div>
                       </div>
-                      <Badge variant="warning">{stats.pending_settlements || stats.pending_orders || 0}</Badge>
+                      <Badge variant="warning">{stats.pending_settlements || 0}</Badge>
                     </div>
                   </Link>
 
