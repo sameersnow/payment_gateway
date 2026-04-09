@@ -36,21 +36,24 @@ function getTypeIcon(type: string) {
 }
 
 export function Ledger() {
-  // Initialize type filter from localStorage
-  const [typeFilter, setTypeFilter] = useState(localStorage.getItem('merchant-ledger-type') || 'all');
+  // Initialize filters from localStorage
+  const [ledgerGroup, setLedgerGroup] = useState(localStorage.getItem('merchant-ledger-group') || 'Payin');
+  const [typeFilter, setTypeFilter] = useState(localStorage.getItem('merchant-ledger-type') || 'All');
   const [currentPage, setCurrentPage] = useState(1);
-  // const [exporting, setExporting] = useState(false); // replaced in hook usage
   const { exportData, loading: exporting } = useExportData(merchantMethods.exportLedger);
   const pageSize = 20;
 
   // Build filter data
-  const filterData = typeFilter !== 'all' ? { type: typeFilter } : undefined;
+  const filterData = {
+    group: ledgerGroup,
+    ...(typeFilter !== 'All' ? { type: typeFilter } : {})
+  };
 
   // Fetch ledger statistics from backend
   const { data: { message: stats } = {} } = useFrappeGetCall(
     merchantMethods.getLedgerStats,
-    undefined,
-    'ledger-stats'
+    { group: ledgerGroup },
+    ['ledger-stats', ledgerGroup]
   );
 
   // Fetch ledger entries
@@ -61,7 +64,7 @@ export function Ledger() {
       page_size: pageSize,
       filter_data: filterData
     },
-    ['ledger', currentPage, typeFilter]
+    ['ledger', currentPage, typeFilter, ledgerGroup]
   );
 
   const entries = ledgerData?.entries || [];
@@ -109,14 +112,41 @@ export function Ledger() {
           </Card>
         </div>
 
+        {/* Ledger Group Tabs */}
+        <div className="flex items-center gap-6 border-b border-slate-200">
+          {(['Payin', 'Payout'] as const).map((group) => (
+            <button
+              key={group}
+              onClick={() => {
+                localStorage.setItem('merchant-ledger-group', group);
+                setLedgerGroup(group);
+                setCurrentPage(1);
+              }}
+              className={`
+                pb-4 px-2 text-sm font-medium transition-colors relative
+                ${ledgerGroup === group
+                  ? 'text-primary-600'
+                  : 'text-slate-500 hover:text-slate-700'
+                }
+              `}
+            >
+              {group} Ledger
+              {ledgerGroup === group && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-600 rounded-t-full" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Transaction Type Filter */}
         <div className="flex gap-2">
           {(['All', 'Credit', 'Debit'] as const).map((type) => (
             <button
               key={type}
               onClick={() => {
-                const newType = type === 'All' ? 'all' : type;
-                localStorage.setItem('merchant-ledger-type', newType);
-                setTypeFilter(newType);
+                localStorage.setItem('merchant-ledger-type', type);
+                setTypeFilter(type);
+                setCurrentPage(1);
               }}
               className={`
                 px-4 py-2 text-sm font-medium rounded-lg transition-colors

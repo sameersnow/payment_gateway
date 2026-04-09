@@ -3499,21 +3499,15 @@ def get_report_metrics(start_date=None, end_date=None, merchant_id=None):
         # INCLUDED Pending/Processing in Total Volume for visibility in dev/test
         metrics_query = f"""
             SELECT 
-                COUNT(*) as total_transactions,
-                SUM(CASE WHEN status IN ('Processed', 'Success', 'Completed') THEN 1 ELSE 0 END) as successful_transactions,
-                SUM(CASE WHEN status IN ('Failed', 'Cancelled', 'Reversed') THEN 1 ELSE 0 END) as failed_transactions,
-                SUM(CASE WHEN status NOT IN ('Failed', 'Cancelled', 'Reversed') THEN COALESCE(order_amount, 0) ELSE 0 END) as total_volume,
-                AVG(CASE WHEN status NOT IN ('Failed', 'Cancelled', 'Reversed') THEN COALESCE(order_amount, 0) ELSE NULL END) as avg_transaction
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Topup' THEN COALESCE(tax, 0) + COALESCE(fee, 0) ELSE 0 END) as payin_revenue,
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Pay' THEN COALESCE(tax, 0) + COALESCE(fee, 0) ELSE 0 END) as payout_revenue,
+                (SUM(CASE WHEN status = 'Processed' THEN COALESCE(tax, 0) + COALESCE(fee, 0) ELSE 0 END) / NULLIF(SUM(CASE WHEN status = 'Processed' THEN COALESCE(order_amount, 0) ELSE 0 END), 0)) * 100 as revenue_percentage
             FROM `tabOrder`
             WHERE 1=1 {where_clause}
         """
         
         metrics = frappe.db.sql(metrics_query, tuple(params), as_dict=True)[0]
-        
-        # Calculate success rate
-        success_rate = 0
-        if metrics['total_transactions'] > 0:
-            success_rate = (metrics['successful_transactions'] / metrics['total_transactions']) * 100
+
         
         # Get new merchants count in date range
         merchant_filters = []
@@ -3536,23 +3530,19 @@ def get_report_metrics(start_date=None, end_date=None, merchant_id=None):
         new_merchants = frappe.db.sql(new_merchants_query, tuple(merchant_params), as_dict=True)[0]['count']
         
         return {
-            'total_volume': float(metrics['total_volume'] or 0),
-            'avg_transaction': float(metrics['avg_transaction'] or 0),
-            'success_rate': round(success_rate, 2),
-            'new_merchants': new_merchants,
-            'total_transactions': metrics['total_transactions'],
-            'failed_transactions': metrics['failed_transactions']
+            'payin_revenue': float(metrics['payin_revenue'] or 0),
+            'payout_revenue': float(metrics['payout_revenue'] or 0),
+            'revenue_percentage': round(float(metrics['revenue_percentage'] or 0), 2),
+            'new_merchants': new_merchants
         }
         
     except Exception as e:
         frappe.log_error(f"Error in get_report_metrics: {str(e)}", "Admin Portal API")
         return {
-            'total_volume': 0,
-            'avg_transaction': 0,
-            'success_rate': 0,
-            'new_merchants': 0,
-            'total_transactions': 0,
-            'failed_transactions': 0
+            'payin_revenue': 0,
+            'payout_revenue': 0,
+            'revenue_percentage': 0,
+            'new_merchants': 0
         }
 
 @frappe.whitelist()
@@ -3600,7 +3590,8 @@ def get_volume_trend(start_date=None, end_date=None, merchant_id=None, grouping=
         trend_query = f"""
             SELECT 
                 DATE_FORMAT(creation, '{date_format}') as date,
-                SUM(CASE WHEN status NOT IN ('Failed', 'Cancelled', 'Reversed') THEN COALESCE(order_amount, 0) ELSE 0 END) as volume,
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Topup' THEN COALESCE(tax, 0) + COALESCE(fee, 0) ELSE 0 END) as payin_revenue,
+                SUM(CASE WHEN status = 'Processed' AND order_type = 'Pay' THEN COALESCE(tax, 0) + COALESCE(fee, 0) ELSE 0 END) as payout_revenue,
                 COUNT(*) as transaction_count
             FROM `tabOrder`
             WHERE {where_clause}
@@ -3636,12 +3627,14 @@ def get_volume_trend(start_date=None, end_date=None, merchant_id=None, grouping=
 
             entry = trend_map.get(formatted_date, {
                 'date': formatted_date,
-                'volume': 0,
+                'payin_revenue': 0,
+                'payout_revenue': 0,
                 'transaction_count': 0
             })
             
             # Ensure float type
-            entry['volume'] = float(entry.get('volume') or 0)
+            entry['payin_revenue'] = float(entry.get('payin_revenue') or 0)
+            entry['payout_revenue'] = float(entry.get('payout_revenue') or 0)
             
             final_data.append(entry)
             current += next_step
@@ -3656,7 +3649,8 @@ def get_volume_trend(start_date=None, end_date=None, merchant_id=None, grouping=
              final_data = [
                 {
                     'date': row['date'],
-                    'volume': float(row['volume'] or 0),
+                    'payin_revenue': float(row['payin_revenue'] or 0),
+                    'payout_revenue': float(row['payout_revenue'] or 0),
                     'transaction_count': row['transaction_count']
                 }
                 for row in trend_data
@@ -3825,117 +3819,6 @@ def get_report_insights(start_date=None, end_date=None, merchant_id=None):
     except Exception as e:
         frappe.log_error(f"Error in get_report_insights: {str(e)}", "Admin Portal API")
         return {"top_merchant": {"name": "N/A", "percentage": 0}, "failed_product": {"name": "N/A", "count": 0}}
-
-@frappe.whitelist()
-def get_report_transactions(start_date=None, end_date=None, merchant_id=None, product=None, status=None, search=None, page=1, page_size=20):
-    """Get transactions for reports page with pagination"""
-    try:
-        check_admin_permission()
-        
-        # Set default date range (last 7 days)
-        if not end_date:
-            end_datetime = datetime.now()
-            end_date = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        if not start_date:
-            start_datetime = datetime.now() - timedelta(days=7)
-            start_datetime = start_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
-            start_date = start_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Parse datetime strings (support both 'YYYY-MM-DD' and 'YYYY-MM-DDTHH:MM' formats)
-        try:
-            if 'T' in str(start_date):
-                # Frontend sends YYYY-MM-DDTHH:MM format, convert to YYYY-MM-DD HH:MM:SS
-                start_date = start_date.replace('T', ' ') + ':00'
-            elif len(str(start_date)) == 10:
-                # Date only, add time
-                start_date = start_date + ' 00:00:00'
-                
-            if 'T' in str(end_date):
-                end_date = end_date.replace('T', ' ') + ':59'
-            elif len(str(end_date)) == 10:
-                # Date only, add time
-                end_date = end_date + ' 23:59:59'
-        except Exception as e:
-            frappe.log_error(f"Error parsing datetime: {str(e)}", "DateTime Parse Error")
-        
-        # Build filters
-        filters = []
-        params = []
-        
-        filters.append("t.creation >= %s")
-        params.append(start_date)
-        filters.append("t.creation <= %s")
-        params.append(end_date)
-        
-        if merchant_id and merchant_id != 'all':
-            filters.append("t.merchant = %s")
-            params.append(merchant_id)
-        
-        if product and product != 'all':
-            filters.append("t.product = %s")
-            params.append(product)
-        
-        if status and status != 'all':
-            filters.append("t.status = %s")
-            params.append(status)
-        
-        if search:
-            filters.append("(t.name LIKE %s OR o.customer_name LIKE %s)")
-            search_param = f"%{search}%"
-            params.extend([search_param, search_param])
-        
-        where_clause = " AND ".join(filters)
-        
-        # Get total count
-        count_query = f"""
-            SELECT COUNT(*) as total
-            FROM `tabTransaction` t
-            LEFT JOIN `tabOrder` o ON t.order = o.name
-            LEFT JOIN `tabMerchant` m ON t.merchant = m.name
-            WHERE {where_clause}
-        """
-        
-        
-        total = frappe.db.sql(count_query, tuple(params), as_dict=True)[0]['total']
-        
-        
-        # Calculate offset
-        page = int(page)
-        page_size = int(page_size)
-        offset = (page - 1) * page_size
-        
-        # Get transactions
-        transactions_query = f"""
-            SELECT 
-                t.name as id,
-                t.creation as date,
-                t.merchant as merchant,
-                m.company_name as merchant_name,
-                o.customer_name,
-                t.product,
-                t.amount,
-                t.status
-            FROM `tabTransaction` t
-            LEFT JOIN `tabOrder` o ON t.order = o.name
-            LEFT JOIN `tabMerchant` m ON t.merchant = m.name
-            WHERE {where_clause}
-            ORDER BY t.creation DESC
-            LIMIT {int(page_size)} OFFSET {offset}
-        """
-        
-        
-        transactions = frappe.db.sql(transactions_query, tuple(params), as_dict=True)
-        
-        return {
-            "transactions": transactions,
-            "total": total,
-            "page": page,
-            "page_size": page_size
-        }
-        
-    except Exception as e:
-        frappe.log_error(f"Error in get_report_transactions: {str(e)}", "Admin Portal API")
-        return {"transactions": [], "total": 0}
 
 @frappe.whitelist()
 def get_report_ledgers(start_date=None, end_date=None, merchant_id=None, entry_type=None, page=1, page_size=20):

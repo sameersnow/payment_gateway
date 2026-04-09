@@ -319,6 +319,13 @@ def get_ledger_entries(filter_data=None, page=1, page_size=20):
             if isinstance(filters, str):
                 filters = json.loads(filters)
             
+            if filters.get("group"):
+                group_type = filters["group"]
+                if group_type == "Payin":
+                    filter_conditions.append("o.order_type = 'Topup'")
+                elif group_type == "Payout":
+                    filter_conditions.append("o.order_type = 'Pay'")
+            
             if filters.get("type"):
                 filter_type = filters["type"]
                 if filter_type == "Credit":
@@ -345,6 +352,7 @@ def get_ledger_entries(filter_data=None, page=1, page_size=20):
         count_query = f"""
             SELECT COUNT(*) as total
             FROM `tabLedger` l
+            LEFT JOIN `tabOrder` o ON l.order = o.name
             WHERE {where_clause}
         """
         total_result = frappe.db.sql(count_query, filter_values, as_dict=True)
@@ -2654,7 +2662,7 @@ def get_settlement_stats():
         }
 
 @frappe.whitelist()
-def get_ledger_stats():
+def get_ledger_stats(group=None):
     """Get ledger statistics (total credits, debits, current balance)"""
     try:
         merchant_email = frappe.session.user
@@ -2662,28 +2670,32 @@ def get_ledger_stats():
         
         if not merchant_id:
             frappe.throw(_("Merchant not found"))
+            
+        where_clause = "l.owner = %(owner)s"
+        params = {"owner": merchant_email}
         
-        # Get total credits
-        credits_stats = frappe.db.sql("""
-            SELECT COALESCE(SUM(transaction_amount), 0) as total_credits
-            FROM `tabLedger`
-            WHERE owner = %s 
-            AND transaction_type = 'Credit'
-        """, (merchant_email,), as_dict=True)
+        if group == "Payin":
+            where_clause += " AND o.order_type = 'Topup'"
+        elif group == "Payout":
+            where_clause += " AND o.order_type = 'Pay'"
         
-        # Get total debits
-        debits_stats = frappe.db.sql("""
-            SELECT COALESCE(SUM(ABS(transaction_amount)), 0) as total_debits
-            FROM `tabLedger`
-            WHERE owner = %s 
-            AND transaction_type = 'Debit'
-        """, (merchant_email,), as_dict=True)
-
-        current_balance = (credits_stats[0]['total_credits'] if credits_stats else 0) - (debits_stats[0]['total_debits'] if debits_stats else 0)
+        stats_query = f"""
+            SELECT 
+                COALESCE(SUM(CASE WHEN l.transaction_type IN ('Payment', 'Credit', 'Topup') THEN l.transaction_amount ELSE 0 END), 0) as total_credits,
+                COALESCE(SUM(CASE WHEN l.transaction_type IN ('Refund', 'Fee', 'Settlement', 'Debit', 'Payout') THEN ABS(l.transaction_amount) ELSE 0 END), 0) as total_debits
+            FROM `tabLedger` l
+            LEFT JOIN `tabOrder` o ON l.order = o.name
+            WHERE {where_clause}
+        """
+        
+        result = frappe.db.sql(stats_query, params, as_dict=True)
+        stats = result[0] if result else {'total_credits': 0, 'total_debits': 0}
+        
+        current_balance = stats['total_credits'] - stats['total_debits']
         
         return {
-            "total_credits": credits_stats[0]['total_credits'] if credits_stats else 0,
-            "total_debits": debits_stats[0]['total_debits'] if debits_stats else 0,
+            "total_credits": stats['total_credits'],
+            "total_debits": stats['total_debits'],
             "current_balance": current_balance
         }
     except Exception as e:

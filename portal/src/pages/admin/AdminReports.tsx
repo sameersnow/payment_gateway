@@ -10,7 +10,7 @@ import { useFrappeGetCall } from 'frappe-react-sdk';
 import { adminMethods } from '../../services/methods';
 import { useExportData } from '../../hooks';
 
-type ReportTab = 'overview' | 'transactions' | 'ledgers' | 'settlements';
+type ReportTab = 'overview' | 'ledgers' | 'settlements';
 
 export function AdminReports() {
 
@@ -54,10 +54,7 @@ export function AdminReports() {
 
     const [dateRange, setDateRange] = useState(getDefaultDateRange());
     const [merchantFilter, setMerchantFilter] = useState('all');
-    const [productFilter, setProductFilter] = useState('all');
 
-    // Initialize status filters from localStorage
-    const [statusFilter, setStatusFilter] = useState(localStorage.getItem('admin-reports-transaction-status') || 'all');
     const [searchQuery] = useState('');
     const [ledgerTypeFilter, setLedgerTypeFilter] = useState(localStorage.getItem('admin-reports-ledger-type') || 'all');
     const [settlementStatusFilter, setSettlementStatusFilter] = useState(localStorage.getItem('admin-reports-settlement-status') || 'all');
@@ -70,14 +67,6 @@ export function AdminReports() {
         'admin-merchants-filter'
     );
     const allMerchants = merchantsData?.merchants || [];
-
-    // Fetch products for filter dropdown
-    const { data: { message: productsData } = {} } = useFrappeGetCall(
-        adminMethods.getProductsForFilter,
-        {},
-        'admin-products-filter'
-    );
-    const allProducts = productsData?.products || [];
 
     // Fetch metrics
     const { data: { message: metricsData } = {} } = useFrappeGetCall(
@@ -123,24 +112,6 @@ export function AdminReports() {
         `admin-report-insights-${dateRange.start}-${dateRange.end}-${merchantFilter}`
     );
 
-    // Fetch transactions for overview and transactions tab
-    const transactionsFilters = {
-        start_date: dateRange.start,
-        end_date: dateRange.end,
-        merchant_id: merchantFilter !== 'all' ? merchantFilter : undefined,
-        product: productFilter !== 'all' ? productFilter : undefined,
-        status: statusFilter !== 'all' ? statusFilter : undefined,
-        search: searchQuery,
-        page: activeTab === 'transactions' ? currentPage : 1,
-        page_size: activeTab === 'transactions' ? 20 : 10
-    };
-
-    const { data: { message: transactionsData } = {} } = useFrappeGetCall(
-        adminMethods.getReportTransactions,
-        transactionsFilters,
-        `admin-report-transactions-${JSON.stringify(transactionsFilters)}-${activeTab}`
-    );
-
     // Fetch ledgers
     const ledgerFilters = {
         filter_data: JSON.stringify({
@@ -180,19 +151,20 @@ export function AdminReports() {
     // Reset page when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [dateRange, merchantFilter, productFilter, statusFilter, searchQuery, ledgerTypeFilter, settlementStatusFilter]);
+    }, [dateRange, merchantFilter, searchQuery, ledgerTypeFilter, settlementStatusFilter]);
 
-    // Extract data from API responses
     const metrics = metricsData || {
-        total_volume: 0,
-        avg_transaction: 0,
-        success_rate: 0,
+        payin_revenue: 0,
+        payout_revenue: 0,
+        revenue_percentage: 0,
         new_merchants: 0
     };
 
     const chartData = (trendData?.trend_data || []).map((item: any) => ({
         date: item.date,
-        revenue: item.volume
+        payin_revenue: item.payin_revenue,
+        payout_revenue: item.payout_revenue,
+        revenue: (item.payin_revenue || 0) + (item.payout_revenue || 0)
     }));
 
     const productDistribution = distributionData?.distribution || [];
@@ -210,11 +182,7 @@ export function AdminReports() {
             to_date: dateRange.end
         };
 
-        if (activeTab === 'transactions') {
-            if (merchantFilter !== 'all') filters.merchant_id = merchantFilter;
-            if (statusFilter !== 'all') filters.status = statusFilter;
-            if (productFilter !== 'all') filters.product = productFilter;
-        } else if (activeTab === 'ledgers') {
+        if (activeTab === 'ledgers') {
             if (merchantFilter !== 'all') filters.merchant = merchantFilter;
             if (ledgerTypeFilter !== 'all') filters.type = ledgerTypeFilter;
         } else if (activeTab === 'settlements') {
@@ -231,9 +199,6 @@ export function AdminReports() {
             console.error('Export error:', error);
         }
     };
-
-    const adminTransactions = transactionsData?.transactions || [];
-    const transactionsTotal = transactionsData?.total || 0;
 
     const ledgerEntries = ledgersData?.entries || [];
 
@@ -292,31 +257,7 @@ export function AdminReports() {
 
                 {/* Status Tabs and Filters on Same Row */}
                 <div className="flex items-center justify-between gap-4">
-                    {/* Status Tabs for Transactions */}
-                    {activeTab === 'transactions' && (
-                        <div className="flex flex-wrap gap-2">
-                            {(['all', 'success', 'failed', 'pending', 'processing'] as const).map((status) => (
-                                <button
-                                    key={status}
-                                    onClick={() => {
-                                        const newStatus = status === 'all' ? 'all' : status.charAt(0).toUpperCase() + status.slice(1);
-                                        localStorage.setItem('admin-reports-transaction-status', newStatus);
-                                        setStatusFilter(newStatus);
-                                        setCurrentPage(1);
-                                    }}
-                                    className={`
-                                        flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-all
-                                        ${(statusFilter.toLowerCase() === status || (statusFilter === 'all' && status === 'all'))
-                                            ? 'bg-slate-900 text-white shadow-sm'
-                                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
-                                        }
-                                    `}
-                                >
-                                    <span>{status.charAt(0).toUpperCase() + status.slice(1)}</span>
-                                </button>
-                            ))}
-                        </div>
-                    )}
+
 
                     {/* Status Tabs for Ledgers */}
                     {activeTab === 'ledgers' && (
@@ -430,24 +371,7 @@ export function AdminReports() {
                                 />
                             </div>
 
-                            {activeTab === 'transactions' && (
-                                <div className="space-y-1">
-                                    <label className="text-xs font-medium text-slate-700 block mb-2">
-                                        Product
-                                    </label>
-                                    <Select
-                                        value={productFilter}
-                                        onChange={(e) => setProductFilter(e.target.value)}
-                                        options={[
-                                            { value: 'all', label: 'All Products' },
-                                            ...allProducts.map((product: any) => ({
-                                                value: product.id,
-                                                label: product.name
-                                            }))
-                                        ]}
-                                    />
-                                </div>
-                            )}
+
 
 
                         </div>
@@ -462,8 +386,8 @@ export function AdminReports() {
                             <Card>
                                 <div className="flex items-start justify-between">
                                     <div>
-                                        <p className="text-sm font-medium text-slate-500">Total Volume</p>
-                                        <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(metrics.total_volume)}</p>
+                                        <p className="text-sm font-medium text-slate-500">Total Payout Revenue</p>
+                                        <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(metrics.payout_revenue)}</p>
                                     </div>
                                     <div className="p-2 bg-slate-50 rounded-lg text-slate-400">
                                         <TrendingUp className="w-5 h-5" />
@@ -473,8 +397,8 @@ export function AdminReports() {
                             <Card>
                                 <div className="flex items-start justify-between">
                                     <div>
-                                        <p className="text-sm font-medium text-slate-500">Avg. Transaction</p>
-                                        <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(metrics.avg_transaction)}</p>
+                                        <p className="text-sm font-medium text-slate-500">Total Payin Revenue</p>
+                                        <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(metrics.payin_revenue)}</p>
                                     </div>
                                     <div className="p-2 bg-slate-50 rounded-lg text-slate-400">
                                         <TrendingUp className="w-5 h-5" />
@@ -484,8 +408,8 @@ export function AdminReports() {
                             <Card>
                                 <div className="flex items-start justify-between">
                                     <div>
-                                        <p className="text-sm font-medium text-slate-500">Success Rate</p>
-                                        <p className="text-2xl font-bold text-slate-900 mt-1">{metrics.success_rate}%</p>
+                                        <p className="text-sm font-medium text-slate-500">Overall Revenue Margin</p>
+                                        <p className="text-2xl font-bold text-slate-900 mt-1">{metrics.revenue_percentage.toFixed(2)}%</p>
                                     </div>
                                     <div className="p-2 bg-slate-50 rounded-lg text-slate-400">
                                         <Activity className="w-5 h-5" />
@@ -556,132 +480,8 @@ export function AdminReports() {
                                 </Card>
                             </div>
                         </div>
-
-                        {/* Recent Transactions Preview */}
-                        <Card padding="none">
-                            <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-                                <h3 className="font-semibold text-slate-900">Recent Transaction Log</h3>
-                                <button onClick={() => setActiveTab('transactions')} className="text-sm text-primary-600 font-medium hover:text-primary-700">
-                                    View All
-                                </button>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full">
-                                    <thead className="bg-slate-50">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">ID</th>
-                                            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Merchant</th>
-                                            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Product/Method</th>
-                                            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Amount</th>
-                                            <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-200">
-                                        {adminTransactions.slice(0, 10).map((txn: any) => (
-                                            <tr key={txn.id} className="hover:bg-slate-50">
-                                                <td className="px-6 py-4 text-sm font-mono text-slate-900">{txn.id}</td>
-                                                <td className="px-6 py-4 text-sm text-slate-600">
-                                                    {txn.merchant_name}
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-slate-600">{txn.product}</td>
-                                                <td className="px-6 py-4 text-sm font-medium text-slate-900">{formatCurrency(txn.amount)}</td>
-                                                <td className="px-6 py-4">
-                                                    <Badge variant={txn.status === 'Processed' ? 'success' : txn.status === 'Pending' ? 'warning' : 'error'}>
-                                                        {txn.status}
-                                                    </Badge>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                        {adminTransactions.length === 0 && (
-                                            <tr>
-                                                <td colSpan={5} className="px-6 py-8 text-center text-sm text-slate-500">
-                                                    No transactions found
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </Card>
                     </div>
-                )}
-
-                {activeTab === 'transactions' && (
-                    <Card padding="none">
-                        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-                            <h3 className="font-semibold text-slate-900">Transaction Report</h3>
-                            <span className="text-xs text-slate-500">Showing {adminTransactions.length} entries</span>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full">
-                                <thead className="bg-slate-50">
-                                    <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">ID</th>
-                                        <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Date</th>
-                                        <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Merchant</th>
-                                        <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Customer</th>
-                                        <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Amount</th>
-                                        <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-widest">Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {adminTransactions.map((txn: any) => (
-                                        <tr key={txn.id} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-6 py-4 text-sm font-mono text-slate-900">{txn.id.slice(0, 12)}...</td>
-                                            <td className="px-6 py-4 text-sm text-slate-500">{formatDateTime(txn.date)}</td>
-                                            <td className="px-6 py-4 text-sm text-slate-900">
-                                                {txn.merchant_name}
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <div className="text-sm text-slate-900 font-medium">{txn.customer_name}</div>
-                                                <div className="text-xs text-slate-500">{txn.customer_email}</div>
-                                            </td>
-                                            <td className="px-6 py-4 text-sm font-semibold text-slate-900">{formatCurrency(txn.amount)}</td>
-                                            <td className="px-6 py-4">
-                                                <Badge variant={txn.status === 'Processed' ? 'success' : txn.status === 'Pending' ? 'warning' : 'error'}>
-                                                    {txn.status}
-                                                </Badge>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {adminTransactions.length === 0 && (
-                                        <tr>
-                                            <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
-                                                No transactions found matching the selected filters.
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                        {/* Pagination */}
-                        <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between bg-white text-sm">
-                            <div className="text-slate-500">
-                                Showing {(currentPage - 1) * 20 + 1} to {Math.min(currentPage * 20, transactionsTotal)} of {transactionsTotal}
-                            </div>
-                            <div className="flex gap-2">
-                                <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                    disabled={currentPage === 1}
-                                >
-                                    Previous
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => setCurrentPage(p => p + 1)}
-                                    disabled={currentPage * 20 >= transactionsTotal}
-                                >
-                                    Next
-                                </Button>
-                            </div>
-                        </div>
-                    </Card>
-                )}
-
-                {activeTab === 'ledgers' && (
+                )}                {activeTab === 'ledgers' && (
                     <Card padding="none">
                         <div className="p-4 border-b border-slate-200 flex items-center justify-between">
                             <h3 className="font-semibold text-slate-900">Merchant Ledger Report</h3>
