@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Search, Calendar } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../../components/layout';
-import { Card, Button, DateTimePicker, StatusTabs, Select } from '../../components/ui';
+import { Card, Button, DateTimePicker, StatusTabs, Select, Modal, useToast } from '../../components/ui';
 import type { StatusTab } from '../../components/ui';
 import { formatCurrency, formatDateTime, truncateId } from '../../utils/formatters';
 import { useFrappeGetCall } from 'frappe-react-sdk';
@@ -35,12 +35,17 @@ export function AdminOrders() {
         searchParams.get('status') || localStorage.getItem('admin-orders-status') || 'all'
     );
     const [merchantFilter, setMerchantFilter] = useState('all');
+    const [orderTypeFilter, setOrderTypeFilter] = useState(localStorage.getItem('admin-orders-type') || 'all');
     const [dateRange, setDateRange] = useState<{ start?: string; end?: string }>({
         start: undefined,
         end: undefined
     });
     const [page, setPage] = useState(1);
     const [showFilters, setShowFilters] = useState(false);
+    const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
+    const [tempDates, setTempDates] = useState({ start: '', end: '' });
+
+    const { error: toastError } = useToast();
 
     // Initialize export hook
     const { exportData, loading: exporting } = useExportData(adminMethods.exportOrdersToExcel);
@@ -50,6 +55,7 @@ export function AdminOrders() {
     // Build filter object
     const filters: any = {};
     if (statusFilter !== 'all') filters.status = statusFilter;
+    if (orderTypeFilter !== 'all') filters.order_type = orderTypeFilter;
     if (merchantFilter !== 'all') filters.merchant_id = merchantFilter;
     if (dateRange.start) filters.from_date = dateRange.start;
     if (dateRange.end) filters.to_date = dateRange.end;
@@ -58,7 +64,7 @@ export function AdminOrders() {
     const { data: { message: ordersData } = {}, isLoading: loading } = useFrappeGetCall(
         adminMethods.getOrders,
         {
-            filter_data: Object.keys(filters).length > 0 ? filters : undefined,
+            filter_data: Object.keys(filters).length > 0 ? JSON.stringify(filters) : undefined,
             page,
             page_size: pageSize,
             sort_by: 'creation',
@@ -113,11 +119,17 @@ export function AdminOrders() {
     ];
 
     // Count active filters
-    const activeFilterCount = [
-        merchantFilter !== 'all',
-        !!dateRange.start,
-        !!dateRange.end
-    ].filter(Boolean).length;
+    const activeFilterCount = (merchantFilter !== 'all' ? 1 : 0) + (orderTypeFilter !== 'all' ? 1 : 0) + (dateRange.start || dateRange.end ? 1 : 0);
+
+    const handleApplyCustomRange = () => {
+        if (tempDates.start && tempDates.end && tempDates.start > tempDates.end) {
+            toastError('Invalid Range', 'Start date cannot be after end date');
+            return;
+        }
+        setDateRange({ start: tempDates.start, end: tempDates.end });
+        setIsCustomRangeModalOpen(false);
+        setPage(1);
+    };
 
     return (
         <DashboardLayout isAdmin>
@@ -195,25 +207,42 @@ export function AdminOrders() {
                         <div className="flex flex-col sm:flex-row gap-4">
                             {/* Date Range - Compact */}
                             <div className="flex-1">
-                                <label className="block text-xs font-medium text-slate-700 mb-2">
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                                     Date Range
                                 </label>
-                                <div className="flex items-center gap-2">
-                                    <DateTimePicker
-                                        value={dateRange.start || ''}
-                                        onChange={(value) => setDateRange({ ...dateRange, start: value })}
-                                    />
-                                    <span className="text-slate-400 text-sm">→</span>
-                                    <DateTimePicker
-                                        value={dateRange.end || ''}
-                                        onChange={(value) => setDateRange({ ...dateRange, end: value })}
-                                    />
-                                </div>
+                                <button
+                                    onClick={() => {
+                                        setTempDates({
+                                            start: dateRange.start || '',
+                                            end: dateRange.end || ''
+                                        });
+                                        setIsCustomRangeModalOpen(true);
+                                    }}
+                                    className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors w-full sm:w-auto"
+                                >
+                                    <Calendar className="w-4 h-4 text-slate-400" />
+                                    {dateRange.start && dateRange.end ? (
+                                        <span>{formatDateTime(dateRange.start)} → {formatDateTime(dateRange.end)}</span>
+                                    ) : (
+                                        <span className="text-slate-500">Select Date Range</span>
+                                    )}
+                                </button>
+                                {(dateRange.start || dateRange.end) && (
+                                    <button
+                                        onClick={() => {
+                                            setDateRange({ start: undefined, end: undefined });
+                                            setPage(1);
+                                        }}
+                                        className="text-xs text-primary-600 hover:text-primary-700 font-medium mt-2 block"
+                                    >
+                                        Clear date filter
+                                    </button>
+                                )}
                             </div>
 
                             {/* Merchant Filter - Compact */}
                             <div className="w-full sm:w-64">
-                                <label className="block text-xs font-medium text-slate-700 mb-2">
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                                     Merchant
                                 </label>
                                 <Select
@@ -225,9 +254,29 @@ export function AdminOrders() {
                                     options={[
                                         { value: 'all', label: 'All Merchants' },
                                         ...merchants.map((m: any) => ({
-                                            value: m.name,
-                                            label: m.company_name
+                                            value: m.id,
+                                            label: m.name
                                         }))
+                                    ]}
+                                />
+                            </div>
+
+                            {/* Order Type Filter */}
+                            <div className="w-full sm:w-48">
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                                    Order Type
+                                </label>
+                                <Select
+                                    value={orderTypeFilter}
+                                    onChange={(e) => {
+                                        setOrderTypeFilter(e.target.value);
+                                        localStorage.setItem('admin-orders-type', e.target.value);
+                                        setPage(1);
+                                    }}
+                                    options={[
+                                        { value: 'all', label: 'All Types' },
+                                        { value: 'Payin', label: 'Payin' },
+                                        { value: 'Payout', label: 'Payout' }
                                     ]}
                                 />
                             </div>
@@ -344,6 +393,36 @@ export function AdminOrders() {
                     )}
                 </Card>
             </div>
+
+            <Modal
+                isOpen={isCustomRangeModalOpen}
+                onClose={() => setIsCustomRangeModalOpen(false)}
+                title="Select Date & Time Range"
+                size="md"
+            >
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <DateTimePicker
+                            label="Start Date & Time"
+                            value={tempDates.start}
+                            onChange={(val) => setTempDates({ ...tempDates, start: val })}
+                        />
+                        <DateTimePicker
+                            label="End Date & Time"
+                            value={tempDates.end}
+                            onChange={(val) => setTempDates({ ...tempDates, end: val })}
+                        />
+                    </div>
+                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                        <Button variant="secondary" onClick={() => setIsCustomRangeModalOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button onClick={handleApplyCustomRange}>
+                            Apply Range
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </DashboardLayout>
     );
 }

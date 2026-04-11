@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
-import { Search, Check, X, AlertCircle, Calendar, MoreVertical } from 'lucide-react';
+import { Search, Check, X, AlertCircle, Calendar, MoreVertical, Clock } from 'lucide-react';
 import { useToast, Button, StatusTabs, Dropdown, DropdownItem } from '../../components/ui';
 import type { StatusTab } from '../../components/ui';
 import { useFrappeGetCall, useFrappePostCall } from 'frappe-react-sdk';
 import { adminMethods } from '../../services/methods';
 import { useExportData } from '../../hooks';
+import { Modal, DateTimePicker, Select } from '../../components/ui';
+import { format, parseISO } from 'date-fns';
 
 export function AdminSettlements() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -19,6 +21,14 @@ export function AdminSettlements() {
     const [showRejectDialog, setShowRejectDialog] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
+    const [merchantFilter, setMerchantFilter] = useState('all');
+    const [startDate, setStartDate] = useState<string | undefined>(undefined);
+    const [endDate, setEndDate] = useState<string | undefined>(undefined);
+    const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
+    const [tempDates, setTempDates] = useState<{ start?: string; end?: string }>({ 
+        start: undefined, 
+        end: undefined 
+    });
     const pageSize = 10;
     const { success: showSuccess, error: showError } = useToast();
 
@@ -31,6 +41,9 @@ export function AdminSettlements() {
     // Build filter object
     const filters: any = {};
     if (statusFilter !== 'all') filters.status = statusFilter;
+    if (merchantFilter !== 'all') filters.merchant_id = merchantFilter;
+    if (startDate) filters.from_date = startDate;
+    if (endDate) filters.to_date = endDate;
 
     // Fetch VAN logs
     const { data: { message: vanData } = {}, isLoading: loading, mutate: refetch } = useFrappeGetCall(
@@ -42,9 +55,43 @@ export function AdminSettlements() {
         },
         `admin-van-logs-${page}-${JSON.stringify(filters)}`
     );
+    
+    // Fetch merchants for filter dropdown
+    const { data: { message: merchantsData } = {} } = useFrappeGetCall(
+        adminMethods.getMerchants,
+        { page: 1, page_size: 100 },
+        'admin-merchants-list-settlement-filter'
+    );
+    const merchants = merchantsData?.merchants || [];
 
     const vanLogs = vanData?.logs || [];
     const totalCount = vanData?.total || 0;
+
+    const activeFilterCount = [
+        merchantFilter !== 'all',
+        !!startDate,
+        !!endDate
+    ].filter(Boolean).length;
+
+    const handleApplyCustomRange = () => {
+        if (tempDates.start && tempDates.end) {
+            if (new Date(tempDates.start) > new Date(tempDates.end)) {
+                showError('Invalid Range', 'Start date cannot be after end date');
+                return;
+            }
+            setStartDate(tempDates.start);
+            setEndDate(tempDates.end);
+            setIsCustomRangeModalOpen(false);
+            setPage(1);
+        }
+    };
+
+    const clearDateFilter = () => {
+        setStartDate(undefined);
+        setEndDate(undefined);
+        setTempDates({ start: undefined, end: undefined });
+        setPage(1);
+    };
 
     // Filter by search query on frontend
     const filteredLogs = vanLogs.filter((log: any) => {
@@ -205,6 +252,11 @@ export function AdminSettlements() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                         </svg>
                         <span>Filters</span>
+                        {activeFilterCount > 0 && (
+                            <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${showFilters ? 'bg-primary-500 text-white' : 'bg-primary-600 text-white'}`}>
+                                {activeFilterCount}
+                            </span>
+                        )}
                         {showFilters ? (
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
@@ -225,8 +277,54 @@ export function AdminSettlements() {
                     `}
                 >
                     <div className="bg-white border border-slate-200 rounded-lg p-4">
-                        <div className="text-sm text-slate-500">
-                            Additional filters coming soon...
+                        <div className="flex flex-col sm:flex-row gap-6">
+                            {/* Merchant Filter */}
+                            <div className="w-full sm:w-64">
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                    Merchant
+                                </label>
+                                <Select
+                                    value={merchantFilter}
+                                    onChange={(e) => {
+                                        setMerchantFilter(e.target.value);
+                                        setPage(1);
+                                    }}
+                                    options={[
+                                        { value: 'all', label: 'All Merchants' },
+                                        ...merchants.map((m: any) => ({
+                                            value: m.name,
+                                            label: m.company_name
+                                        }))
+                                    ]}
+                                />
+                            </div>
+
+                            {/* Date Range Selection */}
+                            <div className="flex-1">
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                    Date Range
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <Button 
+                                        variant="secondary" 
+                                        onClick={() => {
+                                            setTempDates({ start: startDate, end: endDate });
+                                            setIsCustomRangeModalOpen(true);
+                                        }}
+                                        className={`w-full justify-start font-normal ${startDate || endDate ? "border-primary-500 bg-primary-50 text-primary-700" : ""}`}
+                                    >
+                                        <Calendar className="w-4 h-4 mr-2" />
+                                        {startDate && endDate ? (
+                                            `${format(parseISO(startDate), 'MMM d, yyyy HH:mm')} - ${format(parseISO(endDate), 'MMM d, yyyy HH:mm')}`
+                                        ) : "Select date range..."}
+                                    </Button>
+                                    {(startDate || endDate) && (
+                                        <Button variant="ghost" size="sm" onClick={clearDateFilter} className="text-slate-500 hover:text-error-600">
+                                            Clear
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -472,6 +570,45 @@ export function AdminSettlements() {
                     </div>
                 </div>
             )}
+
+            <Modal
+                isOpen={isCustomRangeModalOpen}
+                onClose={() => setIsCustomRangeModalOpen(false)}
+                title="Select Date Range"
+            >
+                <div className="space-y-6 py-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                                <Clock className="w-4 h-4 text-primary-500" />
+                                START DATE & TIME
+                            </label>
+                            <DateTimePicker
+                                value={tempDates.start || format(parseISO(new Date().toISOString()), "yyyy-MM-dd'T'00:00:00")}
+                                onChange={(date) => setTempDates(prev => ({ ...prev, start: date }))}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                                <Clock className="w-4 h-4 text-primary-500" />
+                                END DATE & TIME
+                            </label>
+                            <DateTimePicker
+                                value={tempDates.end || format(parseISO(new Date().toISOString()), "yyyy-MM-dd'T'23:59:59")}
+                                onChange={(date) => setTempDates(prev => ({ ...prev, end: date }))}
+                            />
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                        <Button variant="secondary" onClick={() => setIsCustomRangeModalOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button onClick={handleApplyCustomRange}>
+                            Apply Range
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </DashboardLayout>
     );
 }

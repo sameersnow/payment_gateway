@@ -33,12 +33,14 @@ interface DropdownItemProps {
   onClick?: () => void;
   danger?: boolean;
   icon?: ReactNode;
+  disabled?: boolean;
 }
 
-export function DropdownItem({ children, onClick, danger, icon }: DropdownItemProps) {
+export function DropdownItem({ children, onClick, danger, icon, disabled }: DropdownItemProps) {
   const context = useContext(DropdownContext);
 
   const handleClick = () => {
+    if (disabled) return;
     if (onClick) onClick();
     context?.close();
   };
@@ -46,11 +48,14 @@ export function DropdownItem({ children, onClick, danger, icon }: DropdownItemPr
   return (
     <button
       onClick={handleClick}
+      disabled={disabled}
       className={`
         w-full flex items-center gap-3 px-3 py-2 text-sm text-left transition-colors rounded-md
-        ${danger
-          ? 'text-error-600 hover:bg-error-50'
-          : 'text-slate-700 hover:bg-slate-50'
+        ${disabled
+          ? 'text-slate-400 cursor-not-allowed opacity-60'
+          : danger
+            ? 'text-error-600 hover:bg-error-50'
+            : 'text-slate-700 hover:bg-slate-50'
         }
       `}
     >

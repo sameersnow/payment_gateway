@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, MoreVertical, Building2, Clock, Ban, ArrowUpRight, ShieldCheck, User, Mail, Lock, Eye, EyeOff, Wallet, Pen} from 'lucide-react';
+import { Search, MoreVertical, Building2, Clock, Ban, ArrowUpRight, ShieldCheck, User, Mail, Lock, Eye, EyeOff, Wallet, Pen } from 'lucide-react';
 import { DashboardLayout } from '../../components/layout';
 import { Card, Badge, Button, Dropdown, DropdownItem, DropdownSeparator, Modal, Input, useToast } from '../../components/ui';
 import { formatCurrency, formatRelativeTime } from '../../utils/formatters';
@@ -338,7 +338,10 @@ export function Merchants() {
                         Status
                       </th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                        Balance
+                        Payout Balance
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        Payin Balance
                       </th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                         Integration
@@ -394,7 +397,15 @@ export function Merchants() {
                             <p className="text-sm font-medium text-slate-900">
                               {formatCurrency(merchant.wallet_balance || 0)}
                             </p>
-                            <p className="text-[10px] text-slate-400">Wallet balance</p>
+                            <p className="text-[10px] text-slate-400">Payout balance</p>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div>
+                            <p className="text-sm font-medium text-slate-900">
+                              {formatCurrency(merchant.payin_balance || 0)}
+                            </p>
+                            <p className="text-[10px] text-slate-400">Payin balance</p>
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -425,7 +436,7 @@ export function Merchants() {
                               Transactions
                             </DropdownItem>
                             <DropdownItem
-                              icon = {<Pen className="w-4 h-4"/>}
+                              icon={<Pen className="w-4 h-4" />}
                               onClick={() => navigate(`/admin/merchants/${merchant.name}?tab=configuration`)}
                             >
                               Edit configuration
@@ -521,8 +532,8 @@ export function Merchants() {
               type="button"
               onClick={() => setBalanceAction('Credit')}
               className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${balanceAction === 'Credit'
-                  ? 'bg-success-50 text-success-700 border-success-200'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                ? 'bg-success-50 text-success-700 border-success-200'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                 }`}
             >
               Credit
@@ -531,8 +542,8 @@ export function Merchants() {
               type="button"
               onClick={() => setBalanceAction('Debit')}
               className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${balanceAction === 'Debit'
-                  ? 'bg-error-50 text-error-700 border-error-200'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                ? 'bg-error-50 text-error-700 border-error-200'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                 }`}
             >
               Debit
@@ -543,22 +554,20 @@ export function Merchants() {
             <button
               type="button"
               onClick={() => setWalletType('Payin')}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                walletType === 'Payin'
-                  ? 'bg-primary-50 text-primary-700 border-primary-200'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${walletType === 'Payin'
+                ? 'bg-primary-50 text-primary-700 border-primary-200'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
             >
               Payin
             </button>
             <button
               type="button"
               onClick={() => setWalletType('Payout')}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                walletType === 'Payout'
-                  ? 'bg-primary-50 text-primary-700 border-primary-200'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${walletType === 'Payout'
+                ? 'bg-primary-50 text-primary-700 border-primary-200'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
             >
               Payout
             </button>

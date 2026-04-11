@@ -5,7 +5,7 @@ import {
   CreditCard, Activity, DollarSign
 } from 'lucide-react';
 import { DashboardLayout } from '../../components/layout';
-import { Card, Badge, Button, DebitCard, useToast } from '../../components/ui';
+import { Card, Badge, Button, DebitCard } from '../../components/ui';
 import { InteractiveAreaChart } from '../../components/charts/InteractiveAreaChart';
 import { formatCurrency, formatRelativeTime } from '../../utils/formatters';
 import { useAuth } from '../../hooks';
@@ -112,16 +112,17 @@ export function Dashboard() {
   // Prepare chart data
   const revenueChartData = chartData?.labels?.map((label, index) => ({
     date: label,
-    revenue: chartData.revenue[index] || 0,
-    orders: chartData.orders[index] || 0,
+    payin: chartData.payin[index] || 0,
+    payout: chartData.payout[index] || 0,
   })) || [];
 
-  // Calculate metrics
-  const todayRevenue = stats?.total_processed_amount || 0;
-  const totalOrders = stats?.total_orders || 0;
-  const processedOrders = stats?.processed_orders || 0;
-  const successRate = totalOrders > 0 ? ((processedOrders / totalOrders) * 100).toFixed(1) : '0.0';
-  const avgTransactionValue = processedOrders > 0 ? (todayRevenue / processedOrders) : 0;
+  const totalPayin = revenueChartData.reduce((sum: number, d: any) => sum + d.payin, 0);
+  const totalPayout = revenueChartData.reduce((sum: number, d: any) => sum + d.payout, 0);
+  const payinSuccessRate = stats?.payin_success_rate ?? 0;
+  const payoutSuccessRate = stats?.payout_success_rate ?? 0;
+  const volChangePct = dashboardStats?.metric_trends?.volume_change_pct ?? 0;
+  const payinRateDiff = dashboardStats?.metric_trends?.payin_success_rate_change_pct ?? 0;
+  const payoutRateDiff = dashboardStats?.metric_trends?.payout_success_rate_change_pct ?? 0;
 
   if (loading) {
     return (
@@ -171,38 +172,10 @@ export function Dashboard() {
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard
-            title="Total Revenue"
-            value={formatCurrency(todayRevenue)}
-            icon={DollarSign}
-            change={`${(dashboardStats?.metric_trends?.volume_change_pct || 0) > 0 ? '+' : ''}${dashboardStats?.metric_trends?.volume_change_pct || 0}%`}
-            changeLabel="vs last month"
-            trend={(dashboardStats?.metric_trends?.volume_change_pct || 0) >= 0 ? 'up' : 'down'}
-          />
-          <MetricCard
-            title="Success Rate"
-            value={`${successRate}%`}
-            icon={Activity}
-            change={`${(dashboardStats?.metric_trends?.success_rate_change_pct || 0) > 0 ? '+' : ''}${dashboardStats?.metric_trends?.success_rate_change_pct || 0}%`}
-            changeLabel="vs last week"
-            trend={(dashboardStats?.metric_trends?.success_rate_change_pct || 0) >= 0 ? 'up' : 'down'}
-          />
-          <MetricCard
-            title="Total Orders"
-            value={totalOrders.toString()}
-            change={`+${dashboardStats?.metric_trends?.orders_this_week || 0}`}
-            changeLabel="this week"
-            icon={CreditCard}
-            trend="up"
-          />
-          <MetricCard
-            title="Avg. Order Value"
-            value={formatCurrency(avgTransactionValue)}
-            icon={TrendingUp}
-            change={`${(dashboardStats?.metric_trends?.aov_change_pct || 0) > 0 ? '+' : ''}${dashboardStats?.metric_trends?.aov_change_pct || 0}%`}
-            changeLabel="vs last month"
-            trend={(dashboardStats?.metric_trends?.aov_change_pct || 0) >= 0 ? 'up' : 'down'}
-          />
+          <MetricCard title="Total Payout" value={formatCurrency(totalPayout)} change={`${volChangePct > 0 ? '+' : ''}${volChangePct}%`} changeLabel="vs last month" trend={volChangePct >= 0 ? 'up' : 'down'} icon={DollarSign} />
+          <MetricCard title="Total Payin" value={formatCurrency(totalPayin)} change={`${volChangePct > 0 ? '+' : ''}${volChangePct}%`} changeLabel="vs last month" trend={volChangePct >= 0 ? 'up' : 'down'} icon={DollarSign} />
+          <MetricCard title="Payout Success Rate" value={`${payoutSuccessRate.toFixed(1)}%`} change={`${payoutRateDiff > 0 ? '+' : ''}${payoutRateDiff}%`} changeLabel="vs last week" trend={payoutRateDiff >= 0 ? 'up' : 'down'} icon={Activity} />
+          <MetricCard title="Payin Success Rate" value={`${payinSuccessRate.toFixed(1)}%`} change={`${payinRateDiff > 0 ? '+' : ''}${payinRateDiff}%`} changeLabel="vs last week" trend={payinRateDiff >= 0 ? 'up' : 'down'} icon={Activity} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
