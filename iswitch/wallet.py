@@ -194,7 +194,15 @@ def topup_order():
                 "message": "Payin service is not enabled."
             }
             return finalize_request_response(request_response, response, 403)
-        
+
+        if not merchant.payin_processor:
+            response =  {
+                "code": "0x0422",
+                "status": "UNPROCESSIBLE_ENTITY",
+                "message": "Processor isn't configured yet to process your order. Please try after sometime."
+            }
+            return finalize_request_response(request_response, response, "422")
+
         pricing = product_pricing[0]
         fee = Decimal(pricing.get("fee", 0))
         tax = Decimal(pricing.get("tax_fee", 0))
@@ -207,7 +215,7 @@ def topup_order():
 
         total_amount = order_amount - fee - tax
 
-        processor = frappe.get_doc("Integration", integration_list[0])
+        processor = frappe.get_doc("Integration", merchant.payin_processor)
 
         order = frappe.get_doc({
             "doctype": "Order",
@@ -319,7 +327,7 @@ def topup_order():
                 "api_token": processor.get_password("secret_key"),
                 "mobile": "9999999999",
                 "name": order.customer_name,
-                "amount": order.transaction_amount,
+                "amount": order.order_amount,
                 "email": "user@gmail.com",
                 "order_id": order.processor_order_id
             }
@@ -353,8 +361,8 @@ def topup_order():
 
         elif processor.name == "PAYPROCESS2603240022":
             status = random.choice(["Success", "Failed"])
-            qr = "upi://pay?pa=kdas2024@nsdlpbma&pn=KDAS%20TECHNOLOGIES%20OPC%20PRIVATE%20LIMITED&mc=7372&tr=536276781798654053&tn=SchedulerTest&am=10.00&cu=INR&mode=05&orgid=181046&purpose=00" if status == "Success" else None
-        elif processor.name == "PAYPROCESS2603240032":
+            qr = f"upi://pay?pa=kdas2024@nsdlpbma&pn=KDAS%20TECHNOLOGIES%20OPC%20PRIVATE%20LIMITED&mc=7372&tr=536276781798654053&tn=SchedulerTest&am={order.order_amount}&cu=INR&mode=05&orgid=181046&purpose=00" if status == "Success" else None
+        elif processor.name == "PAYPROCESS26040911519" or processor.name == "PAYPROCESS2603240032":
             mid = processor.get_password("client_id")
             headers = {
                 "Content-Type": "application/json",
@@ -393,7 +401,7 @@ def topup_order():
                 else:
                     status = "Failed"
                     remark = api_response.get("message", "API failed")
-        elif processor.name == "PAYPROCESS2603090008":
+        elif processor.name == "PAYPROCESS26040711506":
             username = processor.get_password("client_id")
             password = processor.get_password("secret_key")
             # Combine username and password

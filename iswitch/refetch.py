@@ -216,7 +216,6 @@ def update_record():
         SELECT name, integration_id FROM `tabOrder`
         WHERE status = 'Processing'
     """, as_dict=True)
-    frappe.log_error("Order to processed",results)
     
     for result in results:
         frappe.db.savepoint("status_process")
@@ -227,7 +226,7 @@ def update_record():
 
             if result.integration_id == "Rabi Pays":
                 processor = frappe.get_doc("Integration", result.integration_id)
-                crn = frappe.db.get_value("Transaction",{"order":result.name},'crn')
+                crn = frappe.db.get_value("Order",result.name,'crn')
 
                 payload = {}
                 
@@ -268,7 +267,7 @@ def update_record():
             
             elif result.integration_id == "PAYPROCESS2603090008":
                 processor = frappe.get_doc("Integration", result.integration_id)
-                crn = frappe.db.get_value("Transaction",{"order":result.name},'crn')
+                crn = frappe.db.get_value("Order",result.name,'crn')
 
                 url = processor.api_endpoint.rstrip("/") + f"/payout/orders/{crn}"
                 username = processor.get_password("client_id")
@@ -289,7 +288,7 @@ def update_record():
                 except Exception as e:
                     frappe.log_error("Error in onepesa requery",response.text)
                     frappe.throw("Error in onepesa requery")
-                frappe.log_error("One Pesa requery response", api_response)
+                frappe.log_error(f"One Pesa requery response {result.name}", api_response)
                 code = api_response.get("code")
                 data = api_response.get("data",{})
                 if code == "0x0200" and (data.get("status", "") == "success" or data.get("status", "") == "processed"):
@@ -306,12 +305,12 @@ def update_record():
 
                 
 
-            elif result.integration_id == "PAYPROCESS2602280371":
+            elif result.integration_id == "PAYPROCESS260228037":
                 processor = frappe.get_doc("Integration",result.integration_id)
-                order = frappe.get_doc("Order", result.name)
+                processor_order_id = frappe.db.get_value("Order", result.name, 'processor_order_id')
                 payload = {
                     "api_token": processor.get_password("secret_key"),
-                    "order_id": order.processor_order_id
+                    "order_id": processor_order_id
                 }
                 headers = {
                     "Content-Type": "application/v2+json"

@@ -154,13 +154,13 @@ app_license = "mit"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"cron": {
-#         "*/10 * * * *": [
-#             "iswitch.refetch.update_record"
-#         ]
-#     }
-# }
+scheduler_events = {
+	"cron": {
+        "*/10 * * * *": [
+            "iswitch.refetch.update_record"
+        ]
+    }
+}
 
 # Testing
 # -------
