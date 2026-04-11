@@ -45,28 +45,54 @@ def normalize_date_filter(date_str, is_end_date=False):
 
 
 @frappe.whitelist()
-def get_dashboard_stats(period='Last 30 days'):
-    """Get comprehensive dashboard statistics for ALL merchants"""
+def get_dashboard_stats(period='Last 30 days', merchant_id=None, start_date=None, end_date=None):
+    """Get comprehensive dashboard statistics for ALL or specific merchants, with optional date range"""
     try:
         check_admin_permission()
         
         # Calculate date range based on period
-        days = 30  # Default
-        if period == 'Last 7 days':
-            days = 7
-        elif period == 'Last 90 days':
-            days = 90
-        elif period == 'This Year':
-            # Calculate days from start of year to today
-            today = frappe.utils.getdate(frappe.utils.nowdate())
-            start_of_year = frappe.utils.getdate(f"{today.year}-01-01")
-            days = (today - start_of_year).days + 1
-        
-        # Use frappe.utils for proper date handling
-        from_date = frappe.utils.add_days(frappe.utils.nowdate(), -days)
+        to_date = frappe.utils.nowdate()
+        if period == 'Custom' and start_date and end_date:
+            from_date = start_date
+            to_date = end_date
+        else:
+            days = 30  # Default
+            if period == 'Last 7 days':
+                days = 7
+            elif period == 'Last 90 days':
+                days = 90
+            elif period == 'This Year':
+                # Calculate days from start of year to today
+                today = frappe.utils.getdate(frappe.utils.nowdate())
+                start_of_year = frappe.utils.getdate(f"{today.year}-01-01")
+                days = (today - start_of_year).days + 1
+            
+            # Use frappe.utils for proper date handling
+            from_date = frappe.utils.add_days(frappe.utils.nowdate(), -days)
 
-        # Get global order statistics for the period
-        order_stats = frappe.db.sql("""
+        # Build order stats conditions
+        order_conditions = ["creation BETWEEN %s AND %s"]
+        # Ensure to_date has time if it's a date string
+        clean_to = to_date
+        if 'T' in clean_to:
+            clean_to = clean_to.replace('T', ' ')
+        elif len(clean_to) <= 10:
+            clean_to = clean_to + " 23:59:59"
+            
+        clean_from = from_date
+        if 'T' in clean_from:
+            clean_from = clean_from.replace('T', ' ')
+            
+        order_params = [clean_from, clean_to]
+        
+        if merchant_id and merchant_id != 'all':
+            order_conditions.append("merchant_ref_id = %s")
+            order_params.append(merchant_id)
+            
+        where_order = " AND ".join(order_conditions)
+
+        # Get order statistics for the period
+        order_stats = frappe.db.sql(f"""
             SELECT 
                 SUM(CASE WHEN status = 'Processed' AND order_type = 'Topup' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payin_total,
                 SUM(CASE WHEN status = 'Processed' AND order_type = 'Pay' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payout_total,
@@ -76,15 +102,24 @@ def get_dashboard_stats(period='Last 30 days'):
                 SUM(CASE WHEN status IN ('Cancelled', 'Reversed', 'Failed', 'Processed') AND order_type = 'Pay' THEN 1 ELSE 0 END) as attempted_payout,
                 SUM(CASE WHEN status IN ('Pending', 'Processing', 'Queued') THEN 1 ELSE 0 END) as pending_orders
             FROM `tabOrder`
-            WHERE creation >= %s
-        """, (from_date,), as_dict=True)
+            WHERE {where_order}
+        """, tuple(order_params), as_dict=True)
 
         # Get pending settlements count
-        settlement_stats = frappe.db.sql("""
+        settlement_conditions = ["status = 'Pending' AND account_number IS NOT NULL AND account_number != ''"]
+        settlement_params = []
+        
+        if merchant_id and merchant_id != 'all':
+            settlement_conditions.append("owner = (SELECT personal_email FROM `tabMerchant` WHERE name = %s)")
+            settlement_params.append(merchant_id)
+            
+        where_settlement = " AND ".join(settlement_conditions)
+
+        settlement_stats = frappe.db.sql(f"""
             SELECT COUNT(*) as pending_settlements
             FROM `tabVirtual Account Logs`
-            WHERE status = 'Pending'
-        """, as_dict=True)
+            WHERE {where_settlement}
+        """, tuple(settlement_params), as_dict=True)
 
         # Get Merchant counts by status
         merchant_counts = frappe.db.sql("""
@@ -110,19 +145,19 @@ def get_dashboard_stats(period='Last 30 days'):
         payout_rate = (proc_payout / att_payout * 100) if att_payout > 0 else 0.0
         
         # Get chart data
-        chart_data_query = """
+        chart_data_query = f"""
             SELECT 
                 DATE(creation) as date,
                 SUM(CASE WHEN order_type = 'Topup' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payin,
                 SUM(CASE WHEN order_type = 'Pay' THEN COALESCE(transaction_amount, 0) ELSE 0 END) as payout,
                 COUNT(*) as orders
             FROM `tabOrder`
-            WHERE creation >= %s AND status = 'Processed'
+            WHERE {where_order} AND status = 'Processed'
             GROUP BY DATE(creation)
             ORDER BY date ASC
         """
         
-        daily_stats = frappe.db.sql(chart_data_query, (from_date,), as_dict=True)
+        daily_stats = frappe.db.sql(chart_data_query, tuple(order_params), as_dict=True)
         
         # Format chart data
         dates = []
@@ -133,11 +168,12 @@ def get_dashboard_stats(period='Last 30 days'):
         stats_map = {str(d.date): d for d in daily_stats}
         
         # Generate full date range
-        today = frappe.utils.getdate(frappe.utils.nowdate())
-        start = frappe.utils.getdate(from_date)
+        # Use frappe.utils to get actual date objects for the range
+        end_dt = frappe.utils.getdate(to_date)
+        start_dt = frappe.utils.getdate(from_date)
         
-        curr = start
-        while curr <= today:
+        curr = start_dt
+        while curr <= end_dt:
             date_str = str(curr)
             stat = stats_map.get(date_str, {})
             
@@ -146,6 +182,9 @@ def get_dashboard_stats(period='Last 30 days'):
             payout_series.append(float(stat.get('payout', 0)))
             
             curr = frappe.utils.add_days(curr, 1)
+            # Limit loop to prevent infinite or too long ranges (e.g. > 1 year)
+            if len(dates) > 366:
+                break
 
         # --- METRIC TRENDS CALCULATION ---
         today_date = frappe.utils.nowdate()
@@ -304,6 +343,13 @@ def get_orders(filter_data=None, page=1, page_size=20, sort_by="creation", sort_
                     status_condition = "o.status = %(status)s"
                     base_values["status"] = status  # Add to values map, but only use in query if needed
             
+            if filters.get("order_type") and filters["order_type"] != "all":
+                order_type = filters["order_type"]
+                if order_type == "Payin":
+                    base_conditions.append("o.order_type = 'Topup'")
+                elif order_type == "Payout":
+                    base_conditions.append("o.order_type = 'Pay'")
+            
             if filters.get("from_date"):
                 clean_from = normalize_date_filter(filters["from_date"], is_end_date=False)
                 base_conditions.append("o.creation >= %(from_date)s")
@@ -364,10 +410,10 @@ def get_orders(filter_data=None, page=1, page_size=20, sort_by="creation", sort_
             FROM (
                 SELECT 
                     CASE 
-                        WHEN status IN ('Failed', 'Cancelled') THEN 'Cancelled'
-                        ELSE status
+                        WHEN o.status IN ('Failed', 'Cancelled') THEN 'Cancelled'
+                        ELSE o.status
                     END AS status
-                FROM `tabOrder`
+                FROM `tabOrder` o
                 WHERE {base_where}
             ) t
             GROUP BY status
@@ -1250,6 +1296,10 @@ def get_van_logs(filter_data=None, page=1, page_size=20):
             if filters.get("merchant_id"):
                 base_conditions.append("v.owner = %(merchant_id)s")
                 base_values["merchant_id"] = filters["merchant_id"]
+                
+        base_conditions.append("v.transaction_type = 'Credit'")      
+        base_conditions.append("v.account_number IS NOT NULL")
+        base_conditions.append("v.account_number != ''")
         
         # Construct Where Clauses
         base_where = " AND ".join(base_conditions)
@@ -1687,7 +1737,9 @@ def export_van_logs_to_excel(filters=None):
                 clean_to = filters["to_date"].replace("T", " ")
                 filter_conditions.append("v.creation <= %(to_date)s")
                 filter_values["to_date"] = clean_to
-        
+
+        filter_conditions.append("v.account_number IS NOT NULL")
+        filter_conditions.append("v.account_number != ''")
         where_clause = " AND ".join(filter_conditions)
         
         logs = frappe.db.sql(f"""
@@ -2893,38 +2945,58 @@ def verify_2fa_login(otp):
         return {'success': False, 'error': str(e)}
 
 @frappe.whitelist()
-def get_ledger_entries(filter_data=None, page=1, page_size=20):
+def get_ledger_entries(**kwargs):
     """Get ledger entries across all merchants for admin portal"""
     try:
         check_admin_permission()
         
-        # Build filter conditions
+        page = kwargs.get("page", 1)
+        page_size = kwargs.get("page_size", 20)
+        
         # Build filter conditions
         filter_conditions = ["1=1"]
         filter_values = {}
         
-        filters = filter_data
-        if filters:
-            if isinstance(filters, str):
-                filters = json.loads(filters)
+        filters = kwargs
+        if kwargs.get("filter_data"):
+            if isinstance(kwargs["filter_data"], str):
+                filters = json.loads(kwargs["filter_data"])
+            else:
+                filters = kwargs["filter_data"]
+                
+        merchant = filters.get("merchant") or filters.get("merchant_id")
+        if merchant and merchant != 'all':
+            filter_conditions.append("l.owner = %(merchant)s")
+            filter_values["merchant"] = merchant
             
-            if filters.get("merchant"):
-                filter_conditions.append("o.owner = %(merchant)s")
-                filter_values["merchant"] = filters["merchant"]
-            
-            if filters.get("type"):
+        group = filters.get("group")
+        if group:
+            if group == 'Payin':
+                filter_conditions.append("o.order_type = 'Topup'")
+            elif group == 'Payout':
+                filter_conditions.append("o.order_type = 'Pay'")
+        
+        entry_type = filters.get("type") or filters.get("entry_type")
+        if entry_type and entry_type != 'all':
+            if entry_type.lower() == "credit":
+                filter_conditions.append("l.transaction_type IN ('Payment', 'Credit', 'Topup')")
+            elif entry_type.lower() == "debit":
+                filter_conditions.append("l.transaction_type IN ('Refund', 'Fee', 'Settlement', 'Debit', 'Payout')")
+            else:
                 filter_conditions.append("l.transaction_type = %(type)s")
-                filter_values["type"] = filters["type"]
-            
-            if filters.get("from_date"):
-                clean_from = filters["from_date"].replace("T", " ")
-                filter_conditions.append("l.creation >= %(from_date)s")
-                filter_values["from_date"] = clean_from
-            
-            if filters.get("to_date"):
-                clean_to = filters["to_date"].replace("T", " ")
-                filter_conditions.append("l.creation <= %(to_date)s")
-                filter_values["to_date"] = clean_to
+                filter_values["type"] = entry_type
+        
+        from_date = filters.get("from_date") or filters.get("start_date")
+        if from_date:
+            clean_from = from_date.replace("T", " ")
+            filter_conditions.append("l.creation >= %(from_date)s")
+            filter_values["from_date"] = clean_from
+        
+        to_date = filters.get("to_date") or filters.get("end_date")
+        if to_date:
+            clean_to = to_date.replace("T", " ")
+            filter_conditions.append("l.creation <= %(to_date)s")
+            filter_values["to_date"] = clean_to
         
         where_clause = " AND ".join(filter_conditions)
         
@@ -2932,6 +3004,7 @@ def get_ledger_entries(filter_data=None, page=1, page_size=20):
         count_query = f"""
             SELECT COUNT(*) as total
             FROM `tabLedger` l
+            LEFT JOIN `tabOrder` o ON l.`order` = o.name
             WHERE {where_clause}
         """
         total_result = frappe.db.sql(count_query, filter_values, as_dict=True)
@@ -2942,7 +3015,7 @@ def get_ledger_entries(filter_data=None, page=1, page_size=20):
         entries_query = f"""
             SELECT 
                 l.name as id,
-                l.order as order_id,
+                l.`order` as order_id,
                 l.transaction_type as type,
                 l.transaction_amount,
                 l.opening_balance,
@@ -2958,8 +3031,8 @@ def get_ledger_entries(filter_data=None, page=1, page_size=20):
                 o.product,
                 o.modified as completion_date
             FROM `tabLedger` l
-            LEFT JOIN `tabOrder` o ON l.order = o.name
-            LEFT JOIN `tabMerchant` m ON o.owner = m.name
+            LEFT JOIN `tabOrder` o ON l.`order` = o.name
+            LEFT JOIN `tabMerchant` m ON l.owner = m.name
             WHERE {where_clause}
             ORDER BY l.creation DESC
             LIMIT {int(page_size)} OFFSET {start}
@@ -3415,20 +3488,7 @@ def send_broadcast_notification(title, message, priority='info'):
     except Exception as e:
         frappe.log_error(f"Error in send_broadcast_notification: {str(e)}", "Admin Portal API")
         return {"success": False, "message": str(e)}
-@frappe.whitelist()
-def get_merchants_for_filter():
-    """Get simple list of merchants for dropdowns"""
-    try:
-        check_admin_permission()
-        merchants = frappe.db.sql("""
-            SELECT name as id, company_name as name 
-            FROM `tabMerchant` 
-            ORDER BY company_name ASC
-        """, as_dict=True)
-        return {"merchants": merchants}
-    except Exception as e:
-        frappe.log_error(f"Error in get_merchants_for_filter: {str(e)}", "Admin Portal API")
-        return {"merchants": []}
+
 
 @frappe.whitelist()
 def get_products_for_filter():
@@ -3456,28 +3516,9 @@ def get_report_metrics(start_date=None, end_date=None, merchant_id=None):
     try:
         check_admin_permission()
         
-        # Set default date range (last 7 days)
-        if not end_date:
-            end_datetime = datetime.now()
-            end_date = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        if not start_date:
-            start_datetime = datetime.now() - timedelta(days=7)
-            start_datetime = start_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
-            start_date = start_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Parse datetime strings (support both 'YYYY-MM-DD' and 'YYYY-MM-DDTHH:MM' formats)
-        try:
-            if 'T' in str(start_date):
-                start_date = start_date.replace('T', ' ') + ':00'
-            elif len(str(start_date)) == 10:
-                start_date = start_date + ' 00:00:00'
-                
-            if 'T' in str(end_date):
-                end_date = end_date.replace('T', ' ') + ':59'
-            elif len(str(end_date)) == 10:
-                end_date = end_date + ' 23:59:59'
-        except Exception as e:
-            frappe.log_error(f"Error parsing datetime: {str(e)}", "DateTime Parse Error")
+        # Normalize datetime strings
+        start_date = normalize_date_filter(start_date, is_end_date=False)
+        end_date = normalize_date_filter(end_date, is_end_date=True)
         
         # Build filters
         filters = []
@@ -3493,7 +3534,7 @@ def get_report_metrics(start_date=None, end_date=None, merchant_id=None):
             filters.append("merchant_ref_id = %s")
             params.append(merchant_id)
         
-        where_clause = " AND " + " AND ".join(filters) if filters else ""
+        where_clause = (" AND " + " AND ".join(filters)) if filters else ""
         
         # Get transaction metrics from tabOrder
         # INCLUDED Pending/Processing in Total Volume for visibility in dev/test
@@ -3551,15 +3592,6 @@ def get_volume_trend(start_date=None, end_date=None, merchant_id=None, grouping=
     try:
         check_admin_permission()
         
-        # Set default date range (last 7 days)
-        if not end_date:
-            end_datetime = datetime.now()
-            end_date = end_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        if not start_date:
-            start_datetime = datetime.now() - timedelta(days=7)
-            start_datetime = start_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
-            start_date = start_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        
         # Normalize datetime strings
         start_date = normalize_date_filter(start_date, is_end_date=False)
         end_date = normalize_date_filter(end_date, is_end_date=True)
@@ -3568,16 +3600,18 @@ def get_volume_trend(start_date=None, end_date=None, merchant_id=None, grouping=
         filters = []
         params = []
         
-        filters.append("creation >= %s")
-        params.append(start_date)
-        filters.append("creation <= %s")
-        params.append(end_date)
+        if start_date:
+            filters.append("creation >= %s")
+            params.append(start_date)
+        if end_date:
+            filters.append("creation <= %s")
+            params.append(end_date)
         
         if merchant_id and merchant_id != 'all':
             filters.append("merchant_ref_id = %s")
             params.append(merchant_id)
         
-        where_clause = " AND ".join(filters)
+        where_clause = " AND ".join(filters) if filters else "1=1"
         
         # Determine date grouping format
         date_format = {
@@ -3670,11 +3704,9 @@ def get_product_distribution(start_date=None, end_date=None, merchant_id=None):
     try:
         check_admin_permission()
         
-        # Set default date range (last 7 days)
-        if not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-        if not start_date:
-            start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        # Normalize datetime strings
+        start_date = normalize_date_filter(start_date, is_end_date=False)
+        end_date = normalize_date_filter(end_date, is_end_date=True)
         
         # 1. Get ALL active products first
         all_products = frappe.db.sql("""
@@ -3689,16 +3721,18 @@ def get_product_distribution(start_date=None, end_date=None, merchant_id=None):
         filters = []
         params = []
         
-        filters.append("DATE(creation) >= %s")
-        params.append(start_date)
-        filters.append("DATE(creation) <= %s")
-        params.append(end_date)
+        if start_date:
+            filters.append("DATE(creation) >= %s")
+            params.append(start_date)
+        if end_date:
+            filters.append("DATE(creation) <= %s")
+            params.append(end_date)
         
         if merchant_id and merchant_id != 'all':
             filters.append("merchant_ref_id = %s")
             params.append(merchant_id)
         
-        where_clause = " AND ".join(filters)
+        where_clause = " AND ".join(filters) if filters else "1=1"
         
         distribution_query = f"""
             SELECT 
@@ -3821,16 +3855,14 @@ def get_report_insights(start_date=None, end_date=None, merchant_id=None):
         return {"top_merchant": {"name": "N/A", "percentage": 0}, "failed_product": {"name": "N/A", "count": 0}}
 
 @frappe.whitelist()
-def get_report_ledgers(start_date=None, end_date=None, merchant_id=None, entry_type=None, page=1, page_size=20):
+def get_report_ledgers(start_date=None, end_date=None, merchant_id=None, entry_type=None, group=None, page=1, page_size=20):
     """Get ledger entries for reports page with pagination"""
     try:
         check_admin_permission()
         
-        # Set default date range (last 7 days)
-        if not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-        if not start_date:
-            start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        # Normalize datetime strings
+        start_date = normalize_date_filter(start_date, is_end_date=False)
+        end_date = normalize_date_filter(end_date, is_end_date=True)
         
         # Build filters
         filters = []
@@ -3840,10 +3872,12 @@ def get_report_ledgers(start_date=None, end_date=None, merchant_id=None, entry_t
         start_date = normalize_date_filter(start_date, is_end_date=False)
         end_date = normalize_date_filter(end_date, is_end_date=True)
         
-        filters.append("l.creation >= %s")
-        params.append(start_date)
-        filters.append("l.creation <= %s")
-        params.append(end_date)
+        if start_date:
+            filters.append("l.creation >= %s")
+            params.append(start_date)
+        if end_date:
+            filters.append("l.creation <= %s")
+            params.append(end_date)
         
         if merchant_id and merchant_id != 'all':
             filters.append("o.merchant_ref_id = %s")
@@ -3852,14 +3886,20 @@ def get_report_ledgers(start_date=None, end_date=None, merchant_id=None, entry_t
         if entry_type and entry_type != 'all':
             filters.append("l.transaction_type = %s")
             params.append(entry_type)
+            
+        if group:
+            if group == 'Payin':
+                filters.append("o.order_type = 'Topup'")
+            elif group == 'Payout':
+                filters.append("o.order_type = 'Pay'")
         
-        where_clause = " AND ".join(filters)
+        where_clause = " AND ".join(filters) if filters else "1=1"
         
         # Get total count
         count_query = f"""
             SELECT COUNT(*) as total
             FROM `tabLedger` l
-            LEFT JOIN `tabOrder` o ON l.order = o.name
+            LEFT JOIN `tabOrder` o ON l.`order` = o.name
             WHERE {where_clause}
         """
         
@@ -3883,7 +3923,7 @@ def get_report_ledgers(start_date=None, end_date=None, merchant_id=None, entry_t
                 l.closing_balance,
                 l.status
             FROM `tabLedger` l
-            LEFT JOIN `tabOrder` o ON l.order = o.name
+            LEFT JOIN `tabOrder` o ON l.`order` = o.name
             LEFT JOIN `tabMerchant` m ON o.merchant_ref_id = m.name
             WHERE {where_clause}
             ORDER BY l.creation DESC
@@ -3924,11 +3964,9 @@ def get_report_settlements(start_date=None, end_date=None, merchant_id=None, sta
     try:
         check_admin_permission()
         
-        # Set default date range (last 7 days)
-        if not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-        if not start_date:
-            start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        # Normalize datetime strings
+        start_date = normalize_date_filter(start_date, is_end_date=False)
+        end_date = normalize_date_filter(end_date, is_end_date=True)
         
         # Build filters
         filters = []
@@ -3938,10 +3976,12 @@ def get_report_settlements(start_date=None, end_date=None, merchant_id=None, sta
         start_date = normalize_date_filter(start_date, is_end_date=False)
         end_date = normalize_date_filter(end_date, is_end_date=True)
         
-        filters.append("v.creation >= %s")
-        params.append(start_date)
-        filters.append("v.creation <= %s")
-        params.append(end_date)
+        if start_date:
+            filters.append("v.creation >= %s")
+            params.append(start_date)
+        if end_date:
+            filters.append("v.creation <= %s")
+            params.append(end_date)
         
         if merchant_id and merchant_id != 'all':
             filters.append("va.merchant = %s")
@@ -3950,8 +3990,11 @@ def get_report_settlements(start_date=None, end_date=None, merchant_id=None, sta
         if status and status != 'all':
             filters.append("v.status = %s")
             params.append(status)
+            
+        filters.append("v.account_number IS NOT NULL")
+        filters.append("v.account_number != ''")
         
-        where_clause = " AND ".join(filters)
+        where_clause = " AND ".join(filters) if filters else "1=1"
         
         # Get total count
         count_query = f"""
@@ -4097,7 +4140,7 @@ def get_products_for_filter():
 #             filters.append("merchant_ref_id = %s")
 #             params.append(merchant_id)
         
-#         where_clause = " AND ".join(filters)
+#         where_clause = " AND ".join(filters) if filters else "1=1"
         
 #         # Get top performing merchant
 #         top_merchant_query = f"""

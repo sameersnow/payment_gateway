@@ -1,10 +1,10 @@
 import { Link } from 'react-router-dom';
 import {
   Users, FileText, DollarSign,
-  Activity, ChevronUp, ChevronDown, ArrowUpRight
+  Activity, ChevronUp, ChevronDown, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import { DashboardLayout } from '../../components/layout';
-import { Card, Badge, Button } from '../../components/ui';
+import { Card, Badge, Button, useToast, Modal, DateTimePicker } from '../../components/ui';
 import { InteractiveAreaChart } from '../../components/charts/InteractiveAreaChart';
 import { formatCurrency } from '../../utils/formatters';
 import { BroadcastMessageModal } from '../../components/admin';
@@ -62,15 +62,76 @@ import { adminMethods } from '../../services/methods';
 // ... (imports)
 
 export function AdminDashboard() {
-  const [period, setPeriod] = useState('Last 30 days');
-  const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+  // Helper to format dates for the backend
+  const formatDateTime = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}T00:00:00`;
+  };
 
-  // Fetch real dashboard stats with period
+  const [period, setPeriod] = useState('Last 30 days');
+  const [merchantId, setMerchantId] = useState('all');
+
+  // Set default range (last 30 days) for custom pickers
+  const initialEnd = new Date();
+  const initialStart = new Date();
+  initialStart.setDate(initialStart.getDate() - 30);
+
+  const [startDate, setStartDate] = useState(formatDateTime(initialStart));
+  const [endDate, setEndDate] = useState(formatDateTime(initialEnd));
+  const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+  const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
+  const [tempDates, setTempDates] = useState({ start: startDate, end: endDate });
+
+  // Prepare request parameters
+  const requestParams: any = {
+    period,
+    merchant_id: merchantId
+  };
+
+  if (period === 'Custom') {
+    requestParams.start_date = startDate;
+    requestParams.end_date = endDate;
+  }
+
+  // Fetch real dashboard stats with period and merchantId
   const { data: { message: dashboardData } = {} } = useFrappeGetCall(
     adminMethods.getDashboardStats,
-    { period },
-    `admin-dashboard-stats-${period}`
+    requestParams,
+    `admin-dashboard-stats-${period}-${merchantId}-${startDate}-${endDate}`
   );
+
+  // Fetch merchants for filter dropdown
+  const { data: { message: merchantsFilterData } = {} } = useFrappeGetCall(
+    adminMethods.getMerchantsForFilter,
+    {},
+    'admin-merchants-filter'
+  );
+
+  const merchantsList = merchantsFilterData?.merchants || [];
+
+  const { error: toastError } = useToast();
+
+  const handlePeriodChange = (newPeriod: string) => {
+    if (newPeriod === 'Custom') {
+      setTempDates({ start: startDate, end: endDate });
+      setIsCustomRangeModalOpen(true);
+    } else {
+      setPeriod(newPeriod);
+    }
+  };
+
+  const handleApplyCustomRange = () => {
+    if (tempDates.start > tempDates.end) {
+      toastError('Invalid Range', 'Start date cannot be after end date');
+      return;
+    }
+    setStartDate(tempDates.start);
+    setEndDate(tempDates.end);
+    setPeriod('Custom');
+    setIsCustomRangeModalOpen(false);
+  };
 
   const { data: { message: kycData } = {} } = useFrappeGetCall(
     adminMethods.getKYCSubmissions,
@@ -143,7 +204,7 @@ export function AdminDashboard() {
               title="Total Payout"
               value={formatCurrency(totalPayout)}
               change={`${dashboardData?.metric_trends?.volume_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.volume_change_pct || 0}% vs last month`}
-              icon={DollarSign}
+              icon={ArrowUpRight}
               trend={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'up' : 'down'}
               color={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'success' : 'error'}
             />
@@ -151,7 +212,7 @@ export function AdminDashboard() {
               title="Total Payin"
               value={formatCurrency(totalPayin)}
               change={`${dashboardData?.metric_trends?.volume_change_pct > 0 ? '+' : ''}${dashboardData?.metric_trends?.volume_change_pct || 0}% vs last month`}
-              icon={DollarSign}
+              icon={ArrowDownRight}
               trend={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'up' : 'down'}
               color={dashboardData?.metric_trends?.volume_change_pct >= 0 ? 'success' : 'error'}
             />
@@ -178,7 +239,12 @@ export function AdminDashboard() {
             <InteractiveAreaChart
               data={chartData}
               period={period}
-              onPeriodChange={setPeriod}
+              onPeriodChange={handlePeriodChange}
+              merchants={merchantsList}
+              merchantId={merchantId}
+              onMerchantChange={setMerchantId}
+              startDate={startDate}
+              endDate={endDate}
             />
           </div>
 
@@ -340,6 +406,36 @@ export function AdminDashboard() {
         isOpen={showBroadcastModal}
         onClose={() => setShowBroadcastModal(false)}
       />
+
+      <Modal
+        isOpen={isCustomRangeModalOpen}
+        onClose={() => setIsCustomRangeModalOpen(false)}
+        title="Select Custom Range"
+        size="md"
+      >
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <DateTimePicker
+              label="Start Date & Time"
+              value={tempDates.start}
+              onChange={(val) => setTempDates({ ...tempDates, start: val })}
+            />
+            <DateTimePicker
+              label="End Date & Time"
+              value={tempDates.end}
+              onChange={(val) => setTempDates({ ...tempDates, end: val })}
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+            <Button variant="secondary" onClick={() => setIsCustomRangeModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleApplyCustomRange}>
+              Apply Range
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

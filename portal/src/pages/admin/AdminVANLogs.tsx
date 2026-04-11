@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { Search, Check, X, AlertCircle, Calendar, MoreVertical } from 'lucide-react';
-import { useToast, Button, StatusTabs, Dropdown, DropdownItem } from '../../components/ui';
+import { useToast, Button, StatusTabs, Dropdown, DropdownItem, Modal, Select, DateTimePicker } from '../../components/ui';
 import type { StatusTab } from '../../components/ui';
 import { useFrappeGetCall, useFrappePostCall } from 'frappe-react-sdk';
 import { adminMethods } from '../../services/methods';
@@ -19,8 +19,16 @@ export function AdminVANLogs() {
     const [showRejectDialog, setShowRejectDialog] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
+    const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
+    const [dateRange, setDateRange] = useState<{ start?: string; end?: string }>({
+        start: undefined,
+        end: undefined
+    });
+    const [tempDates, setTempDates] = useState({ start: '', end: '' });
+    const [merchantFilter, setMerchantFilter] = useState('all');
+
     const pageSize = 10;
-    const { success: showSuccess, error: showError } = useToast();
+    const { success: showSuccess, error: showError, error: toastError } = useToast();
 
     // Initialize export hook
     const { exportData, loading: exporting } = useExportData(adminMethods.exportVANLogs);
@@ -28,15 +36,26 @@ export function AdminVANLogs() {
     const { call: approveTopup } = useFrappePostCall(adminMethods.approveTopup);
     const { call: rejectTopup } = useFrappePostCall(adminMethods.rejectTopup);
 
+    // Fetch merchants for filter dropdown
+    const { data: { message: merchantsData } = {} } = useFrappeGetCall(
+        adminMethods.getMerchantsForFilter,
+        {},
+        'admin-merchants-filter'
+    );
+    const merchants = merchantsData?.merchants || [];
+
     // Build filter object
     const filters: any = {};
     if (statusFilter !== 'all') filters.status = statusFilter;
+    if (merchantFilter !== 'all') filters.merchant_id = merchantFilter;
+    if (dateRange.start) filters.from_date = dateRange.start;
+    if (dateRange.end) filters.to_date = dateRange.end;
 
     // Fetch VAN logs
     const { data: { message: vanData } = {}, isLoading: loading, mutate: refetch } = useFrappeGetCall(
         adminMethods.getVANLogs,
         {
-            filter_data: Object.keys(filters).length > 0 ? filters : undefined,
+            filter_data: Object.keys(filters).length > 0 ? JSON.stringify(filters) : undefined,
             page,
             page_size: pageSize
         },
@@ -137,6 +156,18 @@ export function AdminVANLogs() {
         { label: 'Failed', value: 'Failed', count: statusCounts.Failed },
     ];
 
+    const handleApplyCustomRange = () => {
+        if (tempDates.start && tempDates.end && tempDates.start > tempDates.end) {
+            toastError('Invalid Range', 'Start date cannot be after end date');
+            return;
+        }
+        setDateRange({ start: tempDates.start, end: tempDates.end });
+        setIsCustomRangeModalOpen(false);
+        setPage(1);
+    };
+
+    const activeFilterCount = (merchantFilter !== 'all' ? 1 : 0) + (dateRange.start || dateRange.end ? 1 : 0);
+
     return (
         <DashboardLayout isAdmin>
             <div className="space-y-6">
@@ -205,6 +236,11 @@ export function AdminVANLogs() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                         </svg>
                         <span>Filters</span>
+                        {activeFilterCount > 0 && (
+                            <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${showFilters ? 'bg-primary-500 text-white' : 'bg-primary-600 text-white'}`}>
+                                {activeFilterCount}
+                            </span>
+                        )}
                         {showFilters ? (
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
@@ -217,7 +253,6 @@ export function AdminVANLogs() {
                     </button>
                 </div>
 
-                {/* Collapsible Filter Panel */}
                 <div
                     className={`
                         overflow-hidden transition-all duration-300 ease-in-out
@@ -225,8 +260,62 @@ export function AdminVANLogs() {
                     `}
                 >
                     <div className="bg-white border border-slate-200 rounded-lg p-4">
-                        <div className="text-sm text-slate-500">
-                            Additional filters coming soon...
+                        <div className="flex flex-col sm:flex-row gap-6">
+                            {/* Merchant Filter */}
+                            <div className="w-full sm:w-64">
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                                    Merchant
+                                </label>
+                                <Select
+                                    value={merchantFilter}
+                                    onChange={(e) => {
+                                        setMerchantFilter(e.target.value);
+                                        setPage(1);
+                                    }}
+                                    options={[
+                                        { value: 'all', label: 'All Merchants' },
+                                        ...merchants.map((m: any) => ({
+                                            value: m.id,
+                                            label: m.name
+                                        }))
+                                    ]}
+                                />
+                            </div>
+
+                            {/* Date Filter */}
+                            <div className="flex-1">
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                                    Date Range
+                                </label>
+                                <button
+                                    onClick={() => {
+                                        setTempDates({
+                                            start: dateRange.start || '',
+                                            end: dateRange.end || ''
+                                        });
+                                        setIsCustomRangeModalOpen(true);
+                                    }}
+                                    className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors w-full sm:w-auto"
+                                >
+                                    <Calendar className="w-4 h-4 text-slate-400" />
+                                    {dateRange.start && dateRange.end ? (
+                                        <span>{formatDateTime(dateRange.start)} → {formatDateTime(dateRange.end)}</span>
+                                    ) : (
+                                        <span className="text-slate-500">Select Date Range</span>
+                                    )}
+                                </button>
+                                {(dateRange.start || dateRange.end) && (
+                                    <button
+                                        onClick={() => {
+                                            setDateRange({ start: undefined, end: undefined });
+                                            setPage(1);
+                                        }}
+                                        className="text-xs text-primary-600 hover:text-primary-700 font-medium mt-2 block"
+                                    >
+                                        Clear date filter
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -368,6 +457,36 @@ export function AdminVANLogs() {
                     </div>
                 </div>
             </div>
+
+            <Modal
+                isOpen={isCustomRangeModalOpen}
+                onClose={() => setIsCustomRangeModalOpen(false)}
+                title="Select Date & Time Range"
+                size="md"
+            >
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <DateTimePicker
+                            label="Start Date & Time"
+                            value={tempDates.start}
+                            onChange={(val) => setTempDates({ ...tempDates, start: val })}
+                        />
+                        <DateTimePicker
+                            label="End Date & Time"
+                            value={tempDates.end}
+                            onChange={(val) => setTempDates({ ...tempDates, end: val })}
+                        />
+                    </div>
+                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                        <Button variant="secondary" onClick={() => setIsCustomRangeModalOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button onClick={handleApplyCustomRange}>
+                            Apply Range
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
 
             {/* Approve Dialog */}
             {showApproveDialog && selectedLog && (

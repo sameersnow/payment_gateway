@@ -235,6 +235,14 @@ def get_orders(filter_data=None, page=1, page_size=20, sort_by="creation", sort_
                     "(o.name LIKE %(search)s OR o.customer_name LIKE %(search)s OR o.utr LIKE %(search)s)"
                 )
                 filter_values["search"] = search_term
+                
+            # Handle order type
+            if filters.get("order_type") and filters["order_type"] != "all":
+                order_type = filters["order_type"]
+                if order_type == "Payin":
+                    filter_conditions.append("o.order_type = 'Topup'")
+                elif order_type == "Payout":
+                    filter_conditions.append("o.order_type = 'Pay'")
             
             if filters.get("from_date"):
                 # Clean datetime string (replace T with space)
@@ -352,7 +360,7 @@ def get_ledger_entries(filter_data=None, page=1, page_size=20):
         count_query = f"""
             SELECT COUNT(*) as total
             FROM `tabLedger` l
-            LEFT JOIN `tabOrder` o ON l.order = o.name
+            LEFT JOIN `tabOrder` o ON l.`order` = o.name
             WHERE {where_clause}
         """
         total_result = frappe.db.sql(count_query, filter_values, as_dict=True)
@@ -377,7 +385,7 @@ def get_ledger_entries(filter_data=None, page=1, page_size=20):
                 o.product,
                 o.modified as completion_date
             FROM `tabLedger` l
-            LEFT JOIN `tabOrder` o ON l.order = o.name
+            LEFT JOIN `tabOrder` o ON l.`order` = o.name
             WHERE {where_clause}
             ORDER BY l.creation DESC
             LIMIT {int(page_size)} OFFSET {start}
@@ -577,6 +585,10 @@ def get_van_logs(filter_data=None, page=1, page_size=20):
                 clean_to = filters["to_date"].replace("T", " ")
                 filter_conditions.append("v.creation <= %(to_date)s")
                 filter_values["to_date"] = clean_to
+
+        filter_conditions.append("v.transaction_type = 'Credit'")
+        filter_conditions.append("v.account_number IS NOT NULL")
+        filter_conditions.append("v.account_number != ''")
         
         where_clause = " AND ".join(filter_conditions)
         
@@ -2684,7 +2696,7 @@ def get_ledger_stats(group=None):
                 COALESCE(SUM(CASE WHEN l.transaction_type IN ('Payment', 'Credit', 'Topup') THEN l.transaction_amount ELSE 0 END), 0) as total_credits,
                 COALESCE(SUM(CASE WHEN l.transaction_type IN ('Refund', 'Fee', 'Settlement', 'Debit', 'Payout') THEN ABS(l.transaction_amount) ELSE 0 END), 0) as total_debits
             FROM `tabLedger` l
-            LEFT JOIN `tabOrder` o ON l.order = o.name
+            LEFT JOIN `tabOrder` o ON l.`order` = o.name
             WHERE {where_clause}
         """
         

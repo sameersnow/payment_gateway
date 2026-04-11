@@ -1,18 +1,26 @@
 import { useState } from 'react';
-import { Download, Clock, CheckCircle, Building } from 'lucide-react';
+import { Download, Clock, CheckCircle, Building, Calendar, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../../components/layout';
-import { Card, Badge, Button } from '../../components/ui';
+import { Card, Badge, Button, Modal, DateTimePicker } from '../../components/ui';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { useFrappeGetCall } from 'frappe-react-sdk';
 import { merchantMethods } from '../../services';
 import { useExportData } from '../../hooks';
+import { format, parseISO } from 'date-fns';
 
 export function Settlements() {
-  // Initialize active tab from localStorage
   const [activeTab, setActiveTab] = useState<'upcoming' | 'completed'>(
     (localStorage.getItem('merchant-settlements-tab') as 'upcoming' | 'completed') || 'upcoming'
   );
+  const [showFilters, setShowFilters] = useState(false);
+  const [startDate, setStartDate] = useState<string | undefined>(undefined);
+  const [endDate, setEndDate] = useState<string | undefined>(undefined);
+  const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
+  const [tempDates, setTempDates] = useState<{ start?: string; end?: string }>({ 
+    start: undefined, 
+    end: undefined 
+  });
   // const [exporting, setExporting] = useState(false);
   const { exportData, loading: exporting } = useExportData(merchantMethods.exportVANLogs);
 
@@ -30,15 +38,20 @@ export function Settlements() {
     'van-account'
   );
 
+  // Build filters
+  const filters: any = {};
+  if (startDate) filters.from_date = startDate;
+  if (endDate) filters.to_date = endDate;
+
   // Fetch VAN logs
   const { data: { message: vanData } = {}, isLoading: loading } = useFrappeGetCall(
     merchantMethods.getVANLogs,
     {
       page: 1,
-      page_size: 50,
-      filter_data: undefined
+      page_size: 100,
+      filter_data: Object.keys(filters).length > 0 ? filters : undefined
     },
-    'van-logs-50'
+    `van-logs-merchant-${activeTab}-${JSON.stringify(filters)}`
   );
 
   const logs = vanData?.logs || [];
@@ -60,8 +73,32 @@ export function Settlements() {
 
   // Handle export
   const handleExport = async () => {
-    await exportData();
+    await exportData(filters);
   };
+
+  const handleApplyCustomRange = () => {
+    if (tempDates.start && tempDates.end) {
+      if (new Date(tempDates.start) > new Date(tempDates.end)) {
+        // We don't have useToast here yet, but let's assume it's available or use alert
+        alert('Start date cannot be after end date');
+        return;
+      }
+      setStartDate(tempDates.start);
+      setEndDate(tempDates.end);
+      setIsCustomRangeModalOpen(false);
+    }
+  };
+
+  const clearDateFilter = () => {
+    setStartDate(undefined);
+    setEndDate(undefined);
+    setTempDates({ start: undefined, end: undefined });
+  };
+
+  const activeFilterCount = [
+    !!startDate,
+    !!endDate
+  ].filter(Boolean).length;
 
   return (
     <DashboardLayout>
@@ -73,10 +110,61 @@ export function Settlements() {
               View your payout schedule and settlement history
             </p>
           </div>
-          <Button variant="secondary" onClick={handleExport} disabled={exporting}>
-            <Download className="w-4 h-4" />
-            {exporting ? 'Downloading...' : 'Download Statement'}
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => setShowFilters(!showFilters)}
+              className={`flex items-center gap-2 ${showFilters ? 'bg-slate-100 border-slate-300' : ''}`}
+            >
+              <Search className="w-4 h-4" />
+              <span>Filters</span>
+              {activeFilterCount > 0 && (
+                <span className="px-2 py-0.5 text-xs font-semibold bg-primary-600 text-white rounded-full">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+            <Button variant="secondary" onClick={handleExport} disabled={exporting}>
+              <Download className="w-4 h-4" />
+              {exporting ? 'Downloading...' : 'Download Statement'}
+            </Button>
+          </div>
+        </div>
+
+        {/* Collapsible Filter Panel */}
+        <div 
+          className={`
+            overflow-hidden transition-all duration-300 ease-in-out
+            ${showFilters ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0'}
+          `}
+        >
+          <div className="bg-white border border-slate-200 rounded-lg p-6 mb-6">
+            <div className="max-w-xl">
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                Date Range
+              </label>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="secondary" 
+                  onClick={() => {
+                    setTempDates({ start: startDate, end: endDate });
+                    setIsCustomRangeModalOpen(true);
+                  }}
+                  className={`w-full justify-start font-normal ${startDate || endDate ? "border-primary-500 bg-primary-50 text-primary-700" : ""}`}
+                >
+                  <Calendar className="w-4 h-4 mr-2" />
+                  {startDate && endDate ? (
+                    `${format(parseISO(startDate), 'MMM d, yyyy HH:mm')} - ${format(parseISO(endDate), 'MMM d, yyyy HH:mm')}`
+                  ) : "Select date range..."}
+                </Button>
+                {(startDate || endDate) && (
+                  <Button variant="ghost" size="sm" onClick={clearDateFilter} className="text-slate-500 hover:text-error-600">
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Statistics Cards */}
@@ -223,6 +311,45 @@ export function Settlements() {
           </div>
         )}
       </div>
+
+      <Modal
+        isOpen={isCustomRangeModalOpen}
+        onClose={() => setIsCustomRangeModalOpen(false)}
+        title="Select Date Range"
+      >
+        <div className="space-y-6 py-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary-500" />
+                START DATE & TIME
+              </label>
+              <DateTimePicker
+                value={tempDates.start || format(parseISO(new Date().toISOString()), "yyyy-MM-dd'T'00:00:00")}
+                onChange={(date) => setTempDates(prev => ({ ...prev, start: date }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary-500" />
+                END DATE & TIME
+              </label>
+              <DateTimePicker
+                value={tempDates.end || format(parseISO(new Date().toISOString()), "yyyy-MM-dd'T'23:59:59")}
+                onChange={(date) => setTempDates(prev => ({ ...prev, end: date }))}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+            <Button variant="secondary" onClick={() => setIsCustomRangeModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleApplyCustomRange}>
+              Apply Range
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </DashboardLayout>
   );
 }
