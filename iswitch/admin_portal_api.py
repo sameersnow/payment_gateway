@@ -11,6 +11,7 @@ from frappe.utils.file_manager import save_file
 import tigerbeetle as tb
 from iswitch.tigerbeetle_client import get_client
 from decimal import Decimal
+from frappe.utils import now_datetime, add_days, get_datetime
 
 def check_admin_permission():
     # role_profile = frappe.db.get_value("User", frappe.session.user, "role_profile_name")
@@ -21,26 +22,25 @@ def check_admin_permission():
         frappe.throw(_("Access Denied: Admin privileges required"), frappe.PermissionError)
 
 def normalize_date_filter(date_str, is_end_date=False):
-    """
-    Normalize date string for filtering.
-    If date_str is just a date (YYYY-MM-DD), append time component.
-    If is_end_date is True, append 23:59:59, otherwise append 00:00:00.
-    This ensures proper filtering of datetime fields in SQL queries.
-    """
     if not date_str:
         return None
-    
-    # Remove any 'T' and replace with space
+
+    # ✅ Handle datetime input
+    if isinstance(date_str, datetime):
+        if is_end_date:
+            return date_str.strftime('%Y-%m-%d 23:59:59')
+        else:
+            return date_str.strftime('%Y-%m-%d 00:00:00')
+
+    # Existing logic (string case)
     clean_date = date_str.replace("T", " ").strip()
-    
-    # Check if time component exists (contains ':')
+
     if ':' not in clean_date:
-        # No time component, add it
         if is_end_date:
             clean_date += " 23:59:59"
         else:
             clean_date += " 00:00:00"
-    
+
     return clean_date
 
 
@@ -815,7 +815,8 @@ def get_merchants(page=1, page_size=20, search_text=None, filter_data=None):
                 m.integration,
                 m.creation,
                 m.tigerbeetle_id,
-                m.lien_tigerbeetle_id
+                m.lien_tigerbeetle_id,
+                m.payin_tigerbeetle_id
             FROM `tabMerchant` m
             WHERE {where_clause}
             ORDER BY m.creation DESC
@@ -3591,7 +3592,16 @@ def get_volume_trend(start_date=None, end_date=None, merchant_id=None, grouping=
     """Get volume trend data for chart"""
     try:
         check_admin_permission()
-        
+        now = now_datetime()
+
+        if not start_date and not end_date:
+            end_date = now
+            start_date = add_days(now, -30)
+        elif start_date and not end_date:
+            end_date = now
+        elif end_date and not start_date:
+            start_date = add_days(get_datetime(end_date), -30)
+
         # Normalize datetime strings
         start_date = normalize_date_filter(start_date, is_end_date=False)
         end_date = normalize_date_filter(end_date, is_end_date=True)

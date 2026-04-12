@@ -240,7 +240,7 @@ export function Orders() {
                       setTempDates({ start: startDate, end: endDate });
                       setIsCustomRangeModalOpen(true);
                     }}
-                    className={`w-full justify-start font-normal ${startDate || endDate ? "border-primary-500 bg-primary-50 text-primary-700" : "bg-white"}`}
+                    className={`w-auto justify-start font-normal ${startDate || endDate ? "border-primary-500 bg-primary-50 text-primary-700" : "bg-white"}`}
                   >
                     <Calendar className="w-4 h-4 mr-2" />
                     {startDate && endDate ? (

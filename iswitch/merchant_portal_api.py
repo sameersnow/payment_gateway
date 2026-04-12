@@ -592,16 +592,26 @@ def get_van_logs(filter_data=None, page=1, page_size=20):
         
         where_clause = " AND ".join(filter_conditions)
         
-        # Get total count
-        count_query = f"""
-            SELECT COUNT(*) as total
+        # 1. Summary Statistics Query (Calculates stats based on EVERY log matching filters)
+        summary_query = f"""
+            SELECT 
+                COALESCE(SUM(v.amount), 0) as total_amount,
+                COUNT(*) as total_count,
+                COALESCE(SUM(CASE WHEN v.status = 'Pending' THEN v.amount ELSE 0 END), 0) as pending_amount,
+                COUNT(CASE WHEN v.status = 'Pending' THEN 1 END) as pending_count,
+                COALESCE(SUM(CASE WHEN v.status = 'Success' THEN v.amount ELSE 0 END), 0) as settled_amount,
+                COUNT(CASE WHEN v.status = 'Success' THEN 1 END) as settled_count
             FROM `tabVirtual Account Logs` v
             WHERE {where_clause}
         """
-        total_result = frappe.db.sql(count_query, filter_values, as_dict=True)
-        total = total_result[0].total if total_result else 0
+        stats_result = frappe.db.sql(summary_query, filter_values, as_dict=True)
+        stats = stats_result[0] if stats_result else {
+            "total_amount": 0, "total_count": 0,
+            "pending_amount": 0, "pending_count": 0,
+            "settled_amount": 0, "settled_count": 0
+        }
         
-        # Get paginated logs
+        # 2. Get paginated logs
         start = (int(page) - 1) * int(page_size)
         logs_query = f"""
             SELECT 
@@ -628,7 +638,8 @@ def get_van_logs(filter_data=None, page=1, page_size=20):
         
         return {
             "logs": logs,
-            "total": total,
+            "stats": stats,
+            "total": stats["total_count"],
             "page": int(page),
             "page_size": int(page_size)
         }

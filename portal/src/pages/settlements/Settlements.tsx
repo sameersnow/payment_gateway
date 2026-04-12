@@ -24,13 +24,6 @@ export function Settlements() {
   // const [exporting, setExporting] = useState(false);
   const { exportData, loading: exporting } = useExportData(merchantMethods.exportVANLogs);
 
-  // Fetch settlement statistics
-  const { data: { message: stats } = {} } = useFrappeGetCall(
-    merchantMethods.getSettlementStats,
-    undefined,
-    'settlement-stats'
-  );
-
   // Fetch VAN account for payout account display
   const { data: { message: vanAccount } = {} } = useFrappeGetCall(
     merchantMethods.getVANAccount,
@@ -43,7 +36,7 @@ export function Settlements() {
   if (startDate) filters.from_date = startDate;
   if (endDate) filters.to_date = endDate;
 
-  // Fetch VAN logs
+  // Fetch VAN logs - Now includes stats in the response
   const { data: { message: vanData } = {}, isLoading: loading } = useFrappeGetCall(
     merchantMethods.getVANLogs,
     {
@@ -51,9 +44,10 @@ export function Settlements() {
       page_size: 100,
       filter_data: Object.keys(filters).length > 0 ? filters : undefined
     },
-    `van-logs-merchant-${activeTab}-${JSON.stringify(filters)}`
+    `van-logs-merchant-${JSON.stringify(filters)}`
   );
 
+  const stats = vanData?.stats;
   const logs = vanData?.logs || [];
 
   // Separate upcoming (pending) and completed settlements
@@ -150,7 +144,7 @@ export function Settlements() {
                     setTempDates({ start: startDate, end: endDate });
                     setIsCustomRangeModalOpen(true);
                   }}
-                  className={`w-full justify-start font-normal ${startDate || endDate ? "border-primary-500 bg-primary-50 text-primary-700" : ""}`}
+                  className={`w-auto justify-start font-normal ${startDate || endDate ? "border-primary-500 bg-primary-50 text-primary-700" : ""}`}
                 >
                   <Calendar className="w-4 h-4 mr-2" />
                   {startDate && endDate ? (
