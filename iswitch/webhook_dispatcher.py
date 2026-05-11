@@ -12,6 +12,15 @@ TRANSACTION_STATUS_EVENT_MAP = {
     "Topup Failed": "TOPUP_FAILED",
 }
 
+# @frappe.whitelist()
+# def process_webhook(doc, method):
+#     try:
+#         frappe.log_error(f"Sending Webhook {doc.name}", doc.name)
+#         dispatch(doc.name, doc.merchant_ref_id, doc.status)
+#     except Exception as e:
+#         frappe.log_error("Webhook Process Error", frappe.get_traceback())
+
+
 def dispatch(name: str, merchant: str, status: str):
     """Enqueue webhook dispatch — non-blocking."""
     frappe.enqueue(

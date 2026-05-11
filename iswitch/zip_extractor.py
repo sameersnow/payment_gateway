@@ -196,3 +196,159 @@
         
 #     except Exception as e:
 #         frappe.log_error("Error in zip extraction api call", str(e))
+
+
+import frappe
+import hashlib
+import tigerbeetle as tb
+from iswitch.tigerbeetle_client import get_client
+
+@frappe.whitelist()
+def check_transfer_status():
+    data = frappe.request.get_json()
+
+    if not data or not data.get("order_id"):
+        return {
+            "code": "0x0400",
+            "status": "MISSING_PARAMETER",
+            "message": "order_id is required"
+        }
+
+    order_name = data.get("order_id")
+
+    stable_id = lambda value: int(hashlib.sha256(value.encode()).hexdigest()[:32], 16)
+
+    topup_id = stable_id(f"topup-{order_name}")
+    post_id  = stable_id(f"topup-post-{order_name}")
+    void_id  = stable_id(f"topup-void-{order_name}")
+
+    try:
+        client = get_client()
+        transfers = client.lookup_transfers([topup_id, post_id, void_id])
+
+        frappe.log_error(
+            f"Transfer lookup for order {order_name}: found {len(transfers)} transfers",
+            "TB Check"
+        )
+
+        if not transfers:
+            frappe.log_error(
+                f"No TigerBeetle transfers found for order {order_name}",
+                "TB Check - No Transfers"
+            )
+            return {
+                "code": "0x0404",
+                "status": "NOT_FOUND",
+                "order_id": order_name,
+                "message": "No TigerBeetle transfers found for this order",
+                "data": {
+                    "pending": False,
+                    "posted": False,
+                    "voided": False
+                }
+            }
+
+        found_ids   = {t.id for t in transfers}
+        has_pending = topup_id in found_ids
+        has_post    = post_id in found_ids
+        has_void    = void_id in found_ids
+
+        # Determine status
+        if has_post:
+            tb_status = "CAPTURED"
+        elif has_void:
+            tb_status = "VOIDED"
+        elif has_pending:
+            tb_status = "PENDING"
+        else:
+            tb_status = "UNKNOWN"
+
+        transfer_details = []
+        for t in transfers:
+            if t.id == topup_id:
+                label = "PENDING"
+            elif t.id == post_id:
+                label = "POST"
+            elif t.id == void_id:
+                label = "VOID"
+            else:
+                label = "UNKNOWN"
+
+            detail = {
+                "label":         label,
+                "id":            str(t.id),
+                "amount":        str(t.amount / 100),
+                "flags":         str(t.flags),
+                "pending_id":    str(t.pending_id),
+                "code":          t.code,
+                "ledger":        t.ledger,
+                "timestamp":     t.timestamp,
+            }
+            transfer_details.append(detail)
+
+            frappe.log_error(
+                f"[{label}] Order: {order_name} | Amount: {t.amount / 100} | Flags: {t.flags} | Pending ID: {t.pending_id}",
+                f"TB Check - {label} Transfer"
+            )
+
+        # Cross check with Frappe order status
+        order = frappe.db.get_value("Order", order_name,
+            ["name", "status", "transaction_amount", "utr", "merchant_ref_id"],
+            as_dict=True
+        )
+
+        if not order:
+            frappe.log_error(
+                f"Order {order_name} not found in Frappe DB",
+                "TB Check - Frappe Order Missing"
+            )
+            return {
+                "code": "0x0404",
+                "status": "NOT_FOUND",
+                "message": "Order not found in Frappe",
+                "data": {
+                    "tb_status": tb_status,
+                    "transfers": transfer_details
+                }
+            }
+
+        # Detect mismatch between Frappe and TigerBeetle
+        mismatch = False
+        if tb_status == "CAPTURED" and order.status != "Processed":
+            mismatch = True
+        elif tb_status == "VOIDED" and order.status not in ["Failed", "Cancelled"]:
+            mismatch = True
+        elif tb_status == "PENDING" and order.status not in ["Processing", "Queued"]:
+            mismatch = True
+
+        if mismatch:
+            frappe.log_error(
+                f"MISMATCH for order {order_name}: TigerBeetle={tb_status}, Frappe={order.status}",
+                "TB Check - Status Mismatch"
+            )
+
+        return {
+            "code": "0x0200",
+            "status": "SUCCESS",
+            "order_id": order_name,
+            "data": {
+                "tb_status":      tb_status,
+                "frappe_status":  order.status,
+                "mismatch":       mismatch,
+                "amount":         str(order.transaction_amount),
+                "utr":            order.utr,
+                "merchant":       order.merchant_ref_id,
+                "transfers":      transfer_details
+            }
+        }
+
+    except Exception as e:
+        frappe.log_error(
+            f"Error checking TigerBeetle transfer for order {order_name}: {str(e)}",
+            "TB Check - Exception"
+        )
+        return {
+            "code": "0x0500",
+            "status": "ERROR",
+            "message": f"Error checking transfer: {str(e)}"
+        }

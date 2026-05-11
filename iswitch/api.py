@@ -9,6 +9,7 @@ from frappe.auth import validate_auth
 import tigerbeetle as tb
 from iswitch.tigerbeetle_client import get_client
 from decimal import Decimal
+from iswitch.refetch import process_single_order
 
 def stable_id(value: str) -> int:
     return int(hashlib.sha256(value.encode()).hexdigest()[:32], 16)
@@ -595,7 +596,9 @@ def get_order_status():
             }
             return log_and_return(request_response, response, "404")
         order = frappe.get_doc("Order", name)
-        
+        if order.status == "Processing":
+            process_single_order(order.name)
+
         response = {
             "code": "0x0200",
             "status": "SUCCESS",

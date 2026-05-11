@@ -59,6 +59,22 @@ def handle_topup_success(order_name, transaction_reference_id):
         topup_transfer_id = stable_id(f"topup-{order.name}")
         post_transfer_id = stable_id(f"topup-post-{order.name}")
         
+        existing_transfers = client.lookup_transfers([topup_transfer_id])
+        if not existing_transfers:
+            frappe.log_error(
+                f"PENDING transfer not found in TigerBeetle for order {order_name}",
+                "TB Capture - Missing PENDING"
+            )
+            raise Exception(f"PENDING transfer not found for order {order_name}")
+        
+        pending_transfer = existing_transfers[0]
+        amount = pending_transfer.amount  # exact paise from TigerBeetle — no rounding issue
+
+        # frappe.log_error(
+        #     f"Order {order_name} | Frappe amount: {order.transaction_amount} | TB amount: {amount / 100}",
+        #     "TB Capture - Amount Check"
+        # )
+
         # POST the pending transfer (capture) - system → merchant credit
         post_transfer = tb.Transfer(
             id=post_transfer_id,

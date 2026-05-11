@@ -295,7 +295,7 @@ def update_record():
                     txn_status = "SUCCESS"
                     utr = data.get("utr","")
                     remark = api_response.get("message", "")
-                elif code == "0x0202" and data.get("status", "") == "failed":
+                elif code == "0x0202" and data.get("status", "") == "FAILURE":
                     txn_status = "FAILED"
                     remark = (
                             data.get("failedMessage")
@@ -450,3 +450,194 @@ def get_hash_string(payload, secret_key):
 
 def stable_id(value: str) -> int:
     return int(hashlib.sha256(value.encode()).hexdigest()[:32], 16)
+
+
+@frappe.whitelist(allow_guest=False)
+def process_single_order(order_id):
+    if not order_id:
+        frappe.throw("Order ID is required")
+
+    if not frappe.db.exists("Order", order_id):
+        frappe.throw(f"Order {order_id} not found")
+
+    frappe.db.savepoint("status_process")
+
+    try:
+        order = frappe.get_doc("Order", order_id)
+        integration_id = order.integration_id
+
+        txn_status = "Pending"
+        utr = ""
+        remark = ""
+
+        processor = frappe.get_doc("Integration", integration_id)
+
+        # -------------------------------
+        # RABI PAYS
+        # -------------------------------
+        if integration_id == "Rabi Pays":
+            crn = order.crn
+
+            payload = {}
+            raw_body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
+
+            secret_key = processor.get_password("secret_key")
+
+            signature = HMAC.new(
+                secret_key.encode("utf-8"),
+                raw_body.encode("utf-8"),
+                SHA256
+            ).hexdigest()
+
+            headers = {
+                "rabipay-client-id": processor.get_password("client_id"),
+                "rabipay-signature": signature
+            }
+
+            url = processor.api_endpoint.rstrip("/") + f"/transaction/status/{crn}"
+            response = requests.get(url, headers=headers, timeout=30)
+
+            try:
+                api_data = response.json()
+                frappe.log_error(f"RabiPay Requery Response {order_id}", api_data)
+
+                status = api_data.get("status")
+                utr = api_data.get("utr", "")
+
+                if status == "success":
+                    txn_status = "SUCCESS"
+                elif status == "failed":
+                    txn_status = "FAILED"
+
+            except Exception:
+                frappe.log_error(f"RabiPay Error {order_id}", response.text)
+                raise
+
+        # -------------------------------
+        # ONEPESA
+        # -------------------------------
+        elif integration_id == "PAYPROCESS2603090008":
+            crn = order.crn
+
+            credentials = f"{processor.get_password('client_id')}:{processor.get_password('secret_key')}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Basic {encoded_credentials}"
+            }
+
+            url = processor.api_endpoint.rstrip("/") + f"/payout/orders/{crn}"
+            response = requests.get(url, headers=headers, timeout=30)
+
+            api_response = response.json()
+            frappe.log_error(f"OnePesa Requery Response {order_id}", api_response)
+
+            code = api_response.get("code")
+            status = api_response.get("status", "")
+            remark = api_response.get("message", "")
+            data = api_response.get("data", {})
+
+            if code == "0x0200" and data.get("status") in ["success", "processed"]:
+                txn_status = "SUCCESS"
+                utr = data.get("bankReference", "")
+                # frappe.log_error("UTR", utr)
+                remark = api_response.get("message", "")
+
+            elif code == "0x0202":
+                txn_status = "FAILED"
+                remark = data.get("failedMessage") or data.get("reason")
+
+        # -------------------------------
+        # TPI
+        # -------------------------------
+        elif integration_id == "PAYPROCESS260228037":
+            payload = {
+                "api_token": processor.get_password("secret_key"),
+                "order_id": order.processor_order_id
+            }
+
+            url = processor.api_endpoint.rstrip("/") + "/check-trxn-status"
+            response = requests.post(url, json=payload)
+
+            api_response = response.json()
+            frappe.log_error("TPI Requery Response", api_response)
+
+            if api_response.get("status") == "success":
+                data = api_response.get("data", {})
+                if data.get("type") == "payin" and data.get("status") == "credit":
+                    txn_status = "SUCCESS"
+                    utr = data.get("utr")
+
+        # -------------------------------
+        # ASIANPAY
+        # -------------------------------
+        elif integration_id == "PAYPROCESS2603240032" or integration_id == "PAYPROCESS26040911519":
+            txn = order.crn
+            if not txn:
+                txn = frappe.db.get_value("Transaction", {"order": order_id}, "crn")
+
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": processor.get_password("client_id")
+            }
+
+            url = processor.api_endpoint.rstrip("/") + f"/Payment/CheckStatus?order_id={txn}"
+            response = requests.post(url, headers=headers, timeout=30)
+
+            api_response = response.json()
+            frappe.log_error("AsianPay Requery Response", api_response)
+
+            if api_response.get("success"):
+                data = api_response.get("data", {})
+                status = data.get("order_status")
+
+                utr = data.get("bank_reference")
+                remark = api_response.get("payment_message", "")
+
+                if status and status.lower() == "paid":
+                    txn_status = "SUCCESS"
+                elif status and status.lower() in ["failed", "expired"]:
+                    txn_status = "FAILED"
+
+        # -------------------------------
+        # HANDLE RESULT
+        # -------------------------------
+        if frappe.db.exists("Refund Request", order_id):
+            refund = frappe.get_doc("Refund Request", order_id)
+
+            if refund.status == "Processed":
+                return {"status": "already_processed"}
+
+            if txn_status == "SUCCESS":
+                handle_refund_success(order_id, utr)
+
+            elif txn_status == "FAILED":
+                handle_refund_failure(order_id, "Failed", remark)
+
+        else:
+            if order.order_type == "Topup":
+                if txn_status == "SUCCESS":
+                    handle_topup_success(order_id, utr)
+                elif txn_status == "FAILED":
+                    handle_topup_failure(order_id, "Failed", remark)
+
+            elif order.order_type == "Pay":
+                if txn_status == "SUCCESS":
+                    handle_transaction_success(order_id, "Success", utr)
+                elif txn_status == "FAILED":
+                    handle_transaction_failure(order_id, "Failed", remark)
+
+        frappe.db.commit()
+
+        return {
+            "status": "processed",
+            "order_id": order_id,
+            "txn_status": txn_status,
+            "utr": utr
+        }
+
+    except Exception:
+        frappe.db.rollback(save_point="status_process")
+        frappe.log_error(frappe.get_traceback(), f"Single Order Processing Failed: {order_id}")
+        return {"status": "error", "order_id": order_id}
